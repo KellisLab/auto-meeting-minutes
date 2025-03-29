@@ -10,26 +10,58 @@ This pipeline integrates several Python scripts to create a complete workflow:
 2. **url2file.py** - Download SRT transcript from Panopto using video ID
 3. **vtt2txt.py** - Convert subtitles (VTT/SRT) to plain text transcripts with timestamps
 4. **txt2xlsx.py** - Convert text to Excel with speaker highlighting and visual formatting
-5. **xlsx2html.py** - Convert Excel to HTML with direct timestamp links and AI-generated summaries
-6. **fullpipeline.py** - Run the entire process from URL to HTML summaries in one command
+5. **refineStartTimes.py** - Improve timestamp matching for speakers with multiple appearances
+6. **xlsx2html.py** - Convert Excel to HTML with direct timestamp links and AI-generated summaries
+7. **fullpipeline.py** - Run the entire process from URL to HTML summaries in one command
 
-## Requirements
+## Setup and Installation
 
-- Python 3.6+
-- Required packages:
-  ```
-  pandas
-  openpyxl
-  numpy
-  requests
-  openai
-  python-dotenv
-  ```
+### Prerequisites
 
-Install requirements:
+- Python 3.6 or higher
+- pip (Python package installer)
+
+### Setting Up the Environment
+
+1. **Clone the repository**
 
 ```bash
-pip install pandas openpyxl numpy requests openai python-dotenv
+git clone https://github.com/KellisLab/auto-meeting-minutes.git
+```
+
+2. **Create and activate a virtual environment**
+
+For Windows:
+```bash
+python -m venv venv
+venv\Scripts\activate
+```
+
+For macOS/Linux:
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+3. **Install dependencies**
+
+```bash
+pip install -r requirements.txt
+```
+
+or
+
+```bash
+pip install pandas openpyxl numpy requests openai python-dotenv beautifulsoup4 scikit-learn nltk
+```
+
+4. **Set up OpenAI API key**
+
+Create a `.env` file in the project directory:
+
+```
+API_KEY=your_openai_key_here
+GPT_MODEL="chatgpt-4o-latest"  # or another available model
 ```
 
 ## Quick Start
@@ -106,7 +138,22 @@ Features:
 - Special tracking of first speaker occurrences
 - Auto-adjusted column widths
 
-### 5. XLSX to HTML (xlsx2html.py)
+### 5. Refine Start Times (refineStartTimes.py)
+
+Improves timestamp matching for speakers who appear multiple times, ensuring topics in summaries link to the correct instances.
+
+```bash
+python refineStartTimes.py input.xlsx [output.xlsx]
+```
+
+Features:
+- Analyzes text content for better topic-to-timestamp matching
+- Uses natural language processing to find the most relevant speaker instances
+- Updates Excel with improved timestamp mappings
+- Can post-process summaries to improve timestamp accuracy
+- Generates corrected markdown files with accurate timestamps
+
+### 6. XLSX to HTML (xlsx2html.py)
 
 Converts Excel transcript files to HTML with video links and AI-generated summaries.
 
@@ -127,7 +174,7 @@ Output files:
 - `*_speaker_summaries.md` - Markdown version of speaker summaries
 - `*_meeting_summaries.md` - Markdown version of meeting summaries
 
-### 6. Full Pipeline (fullpipeline.py)
+### 7. Full Pipeline (fullpipeline.py)
 
 Runs the entire process from URL to HTML summaries in one command.
 
@@ -136,7 +183,7 @@ python fullpipeline.py [url] [--skip-refinement] [--html-format={simple|numbered
 ```
 
 Options:
-- `--skip-refinement`: Skip the start time refinement step (placeholder for future implementation)
+- `--skip-refinement`: Skip the start time refinement step
 - `--html-format`: Choose between "simple" or "numbered" HTML output format
 - `--language`: Language code for transcript (default: "English_USA")
 
@@ -155,13 +202,42 @@ For the summarization features to work, an OpenAI API key is required. The scrip
 
 You can also enter the key interactively when prompted.
 
+## Troubleshooting
+
+### Common Issues
+
+1. **Missing dependencies**: If you encounter import errors, ensure all dependencies are installed:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **NLTK resource errors**: If refineStartTimes.py raises errors about missing NLTK resources:
+   ```bash
+   python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords')"
+   ```
+
+3. **OpenAI API errors**: Verify your API key is correctly set and has sufficient credits.
+
+4. **SRT download failures**: Ensure the Panopto URL is correct and the video has available transcripts.
+
+### Debugging Tips
+
+- Run each component separately to isolate issues
+- Check intermediate files (.srt, .txt, .xlsx) for content validity
+- Enable verbose output with the `--verbose` flag where available
+- Look for error messages in the console output
+
 ## Customization
 
 Various parameters can be adjusted:
 
 - In txt2xlsx.py: Color generation, column formatting
+- In refineStartTimes.py:
+  - Text similarity thresholds
+  - Keyword extraction settings
+  - Maximum time gap for matching
 - In xlsx2html.py: 
-  - Batch size for summaries (`BATCH_SIZE_SECONDS`)
+  - Batch size for summaries (`DEFAULT_BATCH_SIZE_MINUTES`)
   - AI model selection (via `.env` file)
   - Summary prompt templates
   - HTML and Markdown formatting
@@ -179,7 +255,7 @@ For a video with ID `meeting`, the pipeline produces:
 
 ## Future Improvements
 
-- Implement actual refinement logic in refineStartTimes.py
+- Enhance refineStartTimes.py with more advanced text matching algorithms
 - Add support for different video platforms beyond Panopto
 - Improve AI summarization with more advanced prompts
 - Add alternative summary methods that don't require OpenAI

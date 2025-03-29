@@ -15,6 +15,7 @@ env/
 *.vtt
 *.md
 *.srt
+!requirements.txt
 
 # Python artifacts
 __pycache__/
