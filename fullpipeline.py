@@ -1,27 +1,30 @@
 #!/usr/bin/env python3
 """
-transcript_pipeline.py - Process video transcripts through the complete pipeline
+fullpipeline.py - Complete transcript processing pipeline starting from a URL
 
-This script integrates the following components:
-1. vtt2txt.py - Convert WebVTT subtitle files to plain text transcripts with timestamps
-2. txt2xlsx.py - Convert the plain text transcript to Excel format with formatting
-3. [refineStartTimes.py] - Currently a placeholder for future implementation
-4. xlsx2html.py - Convert Excel transcript files to HTML with links and summaries
+This script integrates all components of the transcript processing pipeline:
+1. url2id.py - Extract Panopto video ID from URL
+2. url2file.py - Download transcript in SRT format
+3. vtt2txt.py - Convert transcript to plain text with timestamps
+4. txt2xlsx.py - Convert text to Excel format with formatting
+5. [refineStartTimes.py] - Currently a placeholder for future implementation
+6. xlsx2html.py - Convert Excel to HTML with links and summaries
 
 Usage:
-    python transcript_pipeline.py input.vtt video_id [--skip-refinement] [--html-format {simple|numbered}]
+    python fullpipeline.py [url] [--skip-refinement] [--html-format {simple|numbered}] [--language LANGUAGE]
 
 Example:
-    python transcript_pipeline.py lecture.vtt 757a2c7c-eb52-47d1-9b4a-b2a1014b530b --html-format=numbered
+    python fullpipeline.py https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=ef5959d0-da5f-4ac0-a1ad-b2aa001320a0
 """
 
 import os
 import sys
 import argparse
 import importlib.util
-from pathlib import Path
+import tempfile
 import subprocess
 import re
+from pathlib import Path
 
 # Import our modules directly
 def import_module_from_file(module_name, file_path):
@@ -35,67 +38,75 @@ def import_module_from_file(module_name, file_path):
     spec.loader.exec_module(module)
     return module
 
-def validate_video_id(video_id):
-    """Validate that the provided string looks like a Panopto video ID"""
-    # Basic validation for UUIDs/GUIDs which Panopto often uses
-    # This pattern matches: 8-4-4-4-12 hexadecimal characters
-    uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-    if not re.match(uuid_pattern, video_id, re.IGNORECASE):
-        print(f"Warning: The provided video ID '{video_id}' doesn't match the expected Panopto UUID format.")
-        response = input("Continue anyway? (y/n): ")
-        if response.lower() != 'y':
-            sys.exit(1)
-
-def run_pipeline(vtt_file, video_id, skip_refinement=False, html_format="numbered"):
-    """Run the complete transcript processing pipeline"""
-    
-    # Validate input file
-    if not os.path.exists(vtt_file):
-        print(f"Error: VTT file not found: {vtt_file}")
-        sys.exit(1)
-    
-    # Validate video ID (basic check)
-    validate_video_id(video_id)
-    
-    # Initialize file paths for intermediate outputs
-    base_name = os.path.splitext(vtt_file)[0]
-    txt_file = f"{base_name}.txt"
-    xlsx_file = f"{base_name}.xlsx"
-    html_file = f"{base_name}.speaker_summaries.html"
-    summary_file = f"{base_name}_meeting_summaries.html"
-    
-    # Step 1: Import and run vtt2txt
-    print("Step 1: Converting VTT to TXT...")
+def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", language="English_USA"):
+    """Run the complete transcript processing pipeline starting from a URL"""
     
     # Get the directory where this script is located
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    vtt2txt_path = os.path.join(script_dir, "vtt2txt.py")
     
-    # Import the module
+    # Step 1: Extract video ID from URL
+    print("Step 1: Extracting video ID from URL...")
+    url2id_path = os.path.join(script_dir, "url2id.py")
+    
     try:
-        vtt2txt = import_module_from_file("vtt2txt", vtt2txt_path)
-        txt_file = vtt2txt.vtt_to_txt(vtt_file, txt_file)
-        print(f"VTT converted to TXT: {txt_file}")
+        url2id = import_module_from_file("url2id", url2id_path)
+        video_id = url2id.extract_id_from_url(url)
+        
+        if not video_id:
+            print("Error: Could not extract a valid video ID from the URL")
+            sys.exit(1)
+        
+        print(f"Extracted video ID: {video_id}")
     except Exception as e:
-        print(f"Error in VTT to TXT conversion: {e}")
+        print(f"Error extracting video ID: {e}")
         sys.exit(1)
     
-    # Step 2: Import and run txt2xlsx
-    print("Step 2: Converting TXT to XLSX...")
-    txt2xlsx_path = os.path.join(script_dir, "txt2xlsx.py")
+    # Step 2: Download transcript from Panopto
+    print("Step 2: Downloading transcript...")
+    url2file_path = os.path.join(script_dir, "url2file.py")
     
     try:
-        # Import the module
+        url2file = import_module_from_file("url2file", url2file_path)
+        srt_file = f"{video_id}.srt"
+        
+        if url2file.download_transcript(video_id, srt_file, language):
+            print(f"Transcript downloaded to: {srt_file}")
+        else:
+            print("Error: Failed to download transcript")
+            sys.exit(1)
+    except Exception as e:
+        print(f"Error downloading transcript: {e}")
+        sys.exit(1)
+    
+    # Step 3: Convert SRT to TXT (using VTT converter as they're similar formats)
+    print("Step 3: Converting transcript to TXT...")
+    vtt2txt_path = os.path.join(script_dir, "vtt2txt.py")
+    txt_file = f"{video_id}.txt"
+    
+    try:
+        vtt2txt = import_module_from_file("vtt2txt", vtt2txt_path)
+        txt_file = vtt2txt.vtt_to_txt(srt_file, txt_file)
+        print(f"Transcript converted to TXT: {txt_file}")
+    except Exception as e:
+        print(f"Error converting to TXT: {e}")
+        sys.exit(1)
+    
+    # Step 4: Convert TXT to XLSX
+    print("Step 4: Converting TXT to XLSX...")
+    txt2xlsx_path = os.path.join(script_dir, "txt2xlsx.py")
+    xlsx_file = f"{video_id}.xlsx"
+    
+    try:
         txt2xlsx = import_module_from_file("txt2xlsx", txt2xlsx_path)
         xlsx_file = txt2xlsx.txt_to_xlsx(txt_file, xlsx_file)
         print(f"TXT converted to XLSX: {xlsx_file}")
     except Exception as e:
         print(f"Error in TXT to XLSX conversion: {e}")
         sys.exit(1)
-        
-    # Step 3: Run refineStartTimes if not skipped (Currently a placeholder)
+    
+    # Step 5: Run refineStartTimes if not skipped (Currently a placeholder)
     if not skip_refinement:
-        print("Step 3: Refining start times...")
+        print("Step 5: Refining start times...")
         refinement_path = os.path.join(script_dir, "refineStartTimes.py")
         
         if os.path.exists(refinement_path):
@@ -109,52 +120,77 @@ def run_pipeline(vtt_file, video_id, skip_refinement=False, html_format="numbere
         else:
             print("Note: refineStartTimes.py not found. Skipping refinement step.")
     else:
-        print("Step 3: Refining start times... (Skipped)")
+        print("Step 5: Refining start times... (Skipped)")
     
-    # Step 4: Import and run xlsx2html
-    print("Step 4: Converting XLSX to HTML...")
+    # Step 6: Convert XLSX to HTML with summaries
+    print("Step 6: Generating HTML with summaries...")
     xlsx2html_path = os.path.join(script_dir, "xlsx2html.py")
+    html_file = f"{video_id}_speaker_summaries.html"
+    summary_file = f"{video_id}_meeting_summaries.html"
+    speaker_summary_file = f"{video_id}_speaker_summaries.md"
+    meeting_summary_md_file = f"{video_id}_meeting_summaries.md"
     
     try:
-        # Import the module
         xlsx2html = import_module_from_file("xlsx2html", xlsx2html_path)
         
         # Process the Excel file
-        html_file, summary_file = xlsx2html.process_xlsx(
+        html_file, summary_file, speaker_summary_file, meeting_summary_md_file = xlsx2html.process_xlsx(
             xlsx_file,
             video_id,
             html_file,
-            html_format
+            html_format,
+            summary_file,
+            speaker_summary_file,
+            meeting_summary_md_file
         )
         
         if html_file and summary_file:
-            print("Pipeline completed successfully!")
+            print("\nPipeline completed successfully!")
             print(f"Speaker links HTML: {html_file}")
+            print(f"Speaker summary Markdown: {speaker_summary_file}")
             print(f"Meeting summaries HTML: {summary_file}")
+            print(f"Meeting summaries Markdown: {meeting_summary_md_file}")
         else:
-            print("Warning: HTML conversion completed but no output files were generated.")
+            print("Warning: HTML conversion completed but output files may be missing.")
     except Exception as e:
         print(f"Error in XLSX to HTML conversion: {e}")
         sys.exit(1)
+    
+    return {
+        "video_id": video_id,
+        "srt_file": srt_file,
+        "txt_file": txt_file,
+        "xlsx_file": xlsx_file,
+        "html_file": html_file,
+        "summary_file": summary_file,
+        "speaker_summary_file": speaker_summary_file,
+        "meeting_summary_md_file": meeting_summary_md_file
+    }
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Process video transcripts through the complete pipeline'
+        description='Process video transcripts from URL through the complete pipeline'
     )
-    parser.add_argument('input_file', help='Input VTT file')
-    parser.add_argument('video_id', help='Panopto video ID')
+    parser.add_argument('url', nargs='?', help='Panopto video URL')
     parser.add_argument('--skip-refinement', action='store_true', 
                       help='Skip the start time refinement step')
     parser.add_argument('--html-format', choices=['simple', 'numbered'], default='numbered',
                       help='Output format for HTML: simple or numbered (default: numbered)')
+    parser.add_argument('--language', default='English_USA',
+                      help='Language code for transcript (default: English_USA)')
     
     args = parser.parse_args()
     
-    run_pipeline(
-        args.input_file,
-        args.video_id,
+    # Get URL from command line or prompt user
+    url = args.url
+    if not url:
+        url = input("Enter Panopto video URL: ")
+    
+    run_pipeline_from_url(
+        url,
         args.skip_refinement,
-        args.html_format
+        args.html_format,
+        args.language
     )
 
 if __name__ == "__main__":

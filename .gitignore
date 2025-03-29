@@ -13,6 +13,8 @@ env/
 *.xlsx
 *.html
 *.vtt
+*.md
+*.srt
 
 # Python artifacts
 __pycache__/
