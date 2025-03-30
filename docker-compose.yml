@@ -1,0 +1,19 @@
+services:
+  transcript-processor:
+    build: .
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./:/app
+      - processed_data:/app/temp_files
+    environment:
+      - FLASK_APP=app.py
+      - FLASK_ENV=production
+      # Uncomment and add your OpenAI API key
+      # - OPENAI_API_KEY=your_api_key_here
+    command: python app.py
+    restart: unless-stopped
+
+volumes:
+  processed_data:
+    driver: local

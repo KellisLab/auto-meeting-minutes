@@ -18,8 +18,9 @@ This pipeline integrates several Python scripts to create a complete workflow:
 
 ### Prerequisites
 
-- Python 3.6 or higher
+- Python 3.12 or higher
 - pip (Python package installer)
+- Docker
 
 ### Setting Up the Environment
 
@@ -29,33 +30,7 @@ This pipeline integrates several Python scripts to create a complete workflow:
 git clone https://github.com/KellisLab/auto-meeting-minutes.git
 ```
 
-2. **Create and activate a virtual environment**
-
-For Windows:
-```bash
-python -m venv venv
-venv\Scripts\activate
-```
-
-For macOS/Linux:
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
-
-3. **Install dependencies**
-
-```bash
-pip install -r requirements.txt
-```
-
-or
-
-```bash
-pip install pandas openpyxl numpy requests openai python-dotenv beautifulsoup4 scikit-learn nltk
-```
-
-4. **Set up OpenAI API key**
+2. **Add .env file**
 
 Create a `.env` file in the project directory:
 
@@ -64,20 +39,12 @@ API_KEY=your_openai_key_here
 GPT_MODEL="chatgpt-4o-latest"  # or another available model
 ```
 
-## Quick Start
-
-Use the integrated pipeline script to process a Panopto video in one command:
-
+3. **Docker**
 ```bash
-python fullpipeline.py https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=YOURVIDEOID
+docker compose up
 ```
 
-This will:
-1. Extract the video ID from the URL
-2. Download the transcript as SRT
-3. Convert to plain text
-4. Format as Excel
-5. Generate HTML with direct links and AI summaries
+Access the web interface at http://localhost:5001
 
 ## Pipeline Components
 
@@ -187,46 +154,6 @@ Options:
 - `--html-format`: Choose between "simple" or "numbered" HTML output format
 - `--language`: Language code for transcript (default: "English_USA")
 
-## OpenAI API Key Configuration
-
-For the summarization features to work, an OpenAI API key is required. The script will look for it in:
-
-1. Environment variable `OPENAI_API_KEY`
-2. The constant `OPENAI_API_KEY` in xlsx2html.py
-3. A file at `~/.openai_config`
-4. A `.env` file in the current directory with:
-   ```
-   API_KEY=your_key_here
-   GPT_MODEL=gpt-4o  # or other model
-   ```
-
-You can also enter the key interactively when prompted.
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Missing dependencies**: If you encounter import errors, ensure all dependencies are installed:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **NLTK resource errors**: If refineStartTimes.py raises errors about missing NLTK resources:
-   ```bash
-   python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords')"
-   ```
-
-3. **OpenAI API errors**: Verify your API key is correctly set and has sufficient credits.
-
-4. **SRT download failures**: Ensure the Panopto URL is correct and the video has available transcripts.
-
-### Debugging Tips
-
-- Run each component separately to isolate issues
-- Check intermediate files (.srt, .txt, .xlsx) for content validity
-- Enable verbose output with the `--verbose` flag where available
-- Look for error messages in the console output
-
 ## Customization
 
 Various parameters can be adjusted:
@@ -260,7 +187,6 @@ For a video with ID `meeting`, the pipeline produces:
 - Improve AI summarization with more advanced prompts
 - Add alternative summary methods that don't require OpenAI
 - Implement speech-to-text options for videos without existing subtitles
-- Create a web interface for easier access
 
 ## License
 

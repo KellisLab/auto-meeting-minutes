@@ -16,6 +16,8 @@ env/
 *.md
 *.srt
 !requirements.txt
+!index.html
+*.python-version
 
 # Python artifacts
 __pycache__/
@@ -38,3 +40,4 @@ var/
 *.egg-info/
 .installed.cfg
 *.egg
+**/.DS_Store
