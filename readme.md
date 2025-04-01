@@ -41,7 +41,7 @@ GPT_MODEL="chatgpt-4o-latest"  # or another available model
 
 3. **Docker**
 ```bash
-docker compose up
+docker-compose up --build
 ```
 
 Access the web interface at http://localhost:5001

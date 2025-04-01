@@ -41,6 +41,7 @@ def download_nltk_resources():
         print("Downloading required NLTK resources...")
         nltk.download('punkt')
         nltk.download('stopwords')
+        nltk.download('punkt_tab')
         print("Download complete.")
 
 # Helper functions for text processing
