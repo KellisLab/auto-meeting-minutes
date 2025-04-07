@@ -10,9 +10,11 @@ This script integrates all components of the transcript processing pipeline:
 5. txt2xlsx.py - Convert text to Excel format with formatting
 6. refineStartTimes.py - Improve timestamp matching for speakers with multiple appearances
 7. xlsx2html.py - Convert Excel to HTML with links and summaries
+8. html_bold_converter.py - Convert markdown-style bold formatting to HTML bold tags
 
 Usage:
     python fullpipeline.py [url] [--skip-refinement] [--html-format {simple|numbered}] [--language LANGUAGE] [--meeting-root DIRECTORY]
+    [--skip-timestamps] [--skip-bold-conversion]
 
 Example:
     python fullpipeline.py https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=ef5959d0-da5f-4ac0-a1ad-b2aa001320a0 --meeting-root /data/meetings
@@ -31,8 +33,6 @@ import datetime
 import platform
 from pathlib import Path
 from dotenv import load_dotenv
-import xattr
-from osxmetadata import OSXMetaData
 
 # Load environment variables from .env file if present
 load_dotenv()
@@ -132,11 +132,6 @@ def set_file_times_macos(path, timestamp):
     - Date Modified (FSContentChangeDate) 
     - Date Added (kMDItemDateAdded)
     - Date Last Opened (kMDItemLastUsedDate)
-    
-    Uses a combination of:
-    - Built-in os.utime for modification and access times
-    - osxmetadata library for extended attributes using direct attribute names
-    - touch command as fallback for creation time
     """
     import os
     import datetime
@@ -152,25 +147,25 @@ def set_file_times_macos(path, timestamp):
         # Convert timestamp to datetime object
         dt = datetime.datetime.fromtimestamp(timestamp)
         
-        # Try using osxmetadata library if available
+        # Try using xattr if available
         try:
+            import xattr
+            from osxmetadata import OSXMetaData
+            
             # Create metadata object for the file
             md = OSXMetaData(abs_path)
             
             # Set last used date
             md.kMDItemLastUsedDate = dt
-            print(f"Set last used date (kMDItemLastUsedDate) for {abs_path}")
             
             # Set creation date
             md.kMDItemFSCreationDate = dt
-            print(f"Set creation date (kMDItemFSCreationDate) for {abs_path}")
             
             # Set content change date
             md.kMDItemFSContentChangeDate = dt
-            print(f"Set content change date (kMDItemFSContentChangeDate) for {abs_path}")
             
         except ImportError:
-            print("Warning: osxmetadata library not installed, skipping extended attributes")
+            print("Warning: xattr/osxmetadata libraries not installed, skipping extended attributes")
         
         # Additionally, try using touch command for creation time as fallback
         try:
@@ -178,7 +173,6 @@ def set_file_times_macos(path, timestamp):
             # Format timestamp as YYYYMMDDhhmm.ss
             time_str = dt.strftime('%Y%m%d%H%M.%S')
             subprocess.run(['touch', '-t', time_str, abs_path], check=True)
-            print(f"Set creation time using touch command for {abs_path}")
         except Exception as e:
             print(f"Warning: Could not use touch command: {e}")
         
@@ -299,7 +293,8 @@ def set_timestamps_for_directory(directory, timestamp):
     
     return success_count, total_count
 
-def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", language="English_USA", meeting_root=None, skip_timestamps=False):
+def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", language="English_USA", 
+                         meeting_root=None, skip_timestamps=False, skip_bold_conversion=False):
     """Run the complete transcript processing pipeline starting from a URL"""
     
     # Use meeting_root from environment variable if not specified
@@ -460,7 +455,7 @@ def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", la
             html_file, summary_file, speaker_summary_file, meeting_summary_md_file = result_files
         
         if os.path.exists(html_file) and os.path.exists(summary_file):
-            print("\nPipeline completed successfully!")
+            print("\nHTML generation completed successfully!")
             print(f"Files saved to: {meeting_dir}")
             print(f"Speaker links HTML: {html_file}")
             print(f"Speaker summary Markdown: {speaker_summary_file}")
@@ -515,6 +510,39 @@ def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", la
     else:
         print("Step 8: Setting file and directory timestamps... (Skipped)")
     
+    # Step 9: Convert markdown-style bold formatting to HTML bold tags
+    if not skip_bold_conversion:
+        print("Step 9: Converting markdown-style bold formatting to HTML bold tags...")
+        html_bold_converter_path = os.path.join(script_dir, "html_bold_converter.py")
+        
+        try:
+            # Import and run the HTML bold converter module
+            html_bold_converter = import_module_from_file("html_bold_converter", html_bold_converter_path)
+            
+            # Process the HTML summary files
+            if os.path.exists(summary_file):
+                html_bold_converter.process_html_file(summary_file)
+                print(f"Converted bold formatting in meeting summaries HTML: {summary_file}")
+            
+            if os.path.exists(html_file):
+                html_bold_converter.process_html_file(html_file)
+                print(f"Converted bold formatting in speaker summaries HTML: {html_file}")
+            
+            # Process the markdown summary files
+            if os.path.exists(meeting_summary_md_file):
+                html_bold_converter.process_md_file(meeting_summary_md_file)
+                print(f"Converted bold formatting in meeting summaries Markdown: {meeting_summary_md_file}")
+            
+            if os.path.exists(speaker_summary_file):
+                html_bold_converter.process_md_file(speaker_summary_file)
+                print(f"Converted bold formatting in speaker summaries Markdown: {speaker_summary_file}")
+            
+        except Exception as e:
+            print(f"Warning: Error in bold formatting conversion: {e}")
+            print("Original summaries are still available.")
+    else:
+        print("Step 9: Converting bold formatting... (Skipped)")
+    
     return {
         "video_id": video_id,
         "meeting_name": meeting_name if meeting_name else video_id,
@@ -547,6 +575,8 @@ def main():
                       help='Use the modified xlsx2html.py script with improved timestamp matching')
     parser.add_argument('--skip-timestamps', action='store_true',
                       help='Skip setting file timestamps to match meeting date')
+    parser.add_argument('--skip-bold-conversion', action='store_true',
+                      help='Skip converting markdown-style bold formatting to HTML bold tags')
     
     args = parser.parse_args()
     
@@ -578,7 +608,8 @@ def main():
         args.html_format,
         args.language,
         args.meeting_root,
-        args.skip_timestamps
+        args.skip_timestamps,
+        args.skip_bold_conversion
     )
 
 if __name__ == "__main__":

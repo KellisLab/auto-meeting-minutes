@@ -586,8 +586,6 @@ def generate_meeting_summaries_html(batches, batch_summaries, video_id, html_fil
             # If no topics were extracted, just show the full summary
             html_lines.append(f'<div class="batch-summary">{summary}</div>')
         
-        # Add separator
-        html_lines.append('<hr>')
     
     # Combine all lines into HTML
     html_content = '<html>\n<head>\n<title>Meeting Summaries</title>\n'
