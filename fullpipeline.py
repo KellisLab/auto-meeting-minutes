@@ -12,10 +12,10 @@ This script integrates all components of the transcript processing pipeline:
 7. xlsx2html.py - Convert Excel to HTML with links and summaries
 
 Usage:
-    python fullpipeline.py [url] [--skip-refinement] [--html-format {simple|numbered}] [--language LANGUAGE]
+    python fullpipeline.py [url] [--skip-refinement] [--html-format {simple|numbered}] [--language LANGUAGE] [--meeting-root DIRECTORY]
 
 Example:
-    python fullpipeline.py https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=ef5959d0-da5f-4ac0-a1ad-b2aa001320a0
+    python fullpipeline.py https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=ef5959d0-da5f-4ac0-a1ad-b2aa001320a0 --meeting-root /data/meetings
 """
 
 import os
@@ -25,7 +25,12 @@ import importlib.util
 import tempfile
 import subprocess
 import re
+import shutil
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if present
+load_dotenv()
 
 # Import our modules directly
 def import_module_from_file(module_name, file_path):
@@ -50,11 +55,23 @@ def sanitize_filename(name):
         name = name[:100]
     return name
 
-def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", language="English_USA"):
+def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", language="English_USA", meeting_root=None):
     """Run the complete transcript processing pipeline starting from a URL"""
+    
+    # Use meeting_root from environment variable if not specified
+    if meeting_root is None:
+        meeting_root = os.getenv('MEETING_ROOT_DIR', 'meetings')
+    
+    # Create meeting root directory if it doesn't exist
+    if not os.path.exists(meeting_root):
+        print(f"Creating meeting root directory: {meeting_root}")
+        os.makedirs(meeting_root, exist_ok=True)
     
     # Get the directory where this script is located
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Remember original directory
+    original_dir = os.getcwd()
     
     # Step 1: Extract video ID from URL
     print("Step 1: Extracting video ID from URL...")
@@ -84,15 +101,25 @@ def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", la
         if not meeting_name:
             print("Warning: Could not extract meeting name, using video ID as fallback")
             file_prefix = video_id
+            meeting_folder_name = video_id
         else:
             # Sanitize meeting name for use in filenames
             file_prefix = sanitize_filename(meeting_name)
+            meeting_folder_name = file_prefix
             print(f"Extracted meeting name: {meeting_name}")
             print(f"Using file prefix: {file_prefix}")
     except Exception as e:
         print(f"Warning: Error extracting meeting name: {e}")
         print("Using video ID as fallback for file naming")
         file_prefix = video_id
+        meeting_folder_name = video_id
+    
+    # Create meeting-specific directory in the meeting root
+    meeting_dir = os.path.join(meeting_root, meeting_folder_name)
+    meeting_dir_abs = os.path.abspath(meeting_dir)
+    if not os.path.exists(meeting_dir):
+        print(f"Creating meeting directory: {meeting_dir}")
+        os.makedirs(meeting_dir, exist_ok=True)
     
     # Step 2: Download transcript from Panopto
     print("Step 2: Downloading transcript...")
@@ -100,7 +127,7 @@ def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", la
     
     try:
         url2file = import_module_from_file("url2file", url2file_path)
-        srt_file = f"{file_prefix}.srt"
+        srt_file = os.path.join(meeting_dir, f"{file_prefix}.srt")
         
         if url2file.download_transcript(video_id, srt_file, language):
             print(f"Transcript downloaded to: {srt_file}")
@@ -114,7 +141,7 @@ def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", la
     # Step 3: Convert SRT to TXT (using VTT converter as they're similar formats)
     print("Step 3: Converting transcript to TXT...")
     vtt2txt_path = os.path.join(script_dir, "vtt2txt.py")
-    txt_file = f"{file_prefix}.txt"
+    txt_file = os.path.join(meeting_dir, f"{file_prefix}.txt")
     
     try:
         vtt2txt = import_module_from_file("vtt2txt", vtt2txt_path)
@@ -127,7 +154,7 @@ def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", la
     # Step 4: Convert TXT to XLSX
     print("Step 4: Converting TXT to XLSX...")
     txt2xlsx_path = os.path.join(script_dir, "txt2xlsx.py")
-    xlsx_file = f"{file_prefix}.xlsx"
+    xlsx_file = os.path.join(meeting_dir, f"{file_prefix}.xlsx")
     
     try:
         txt2xlsx = import_module_from_file("txt2xlsx", txt2xlsx_path)
@@ -149,7 +176,7 @@ def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", la
                 refine_start_times = import_module_from_file("refineStartTimes", refinement_path)
                 
                 # Create a refined version of the Excel file
-                refined_xlsx_file = f"{file_prefix}_refined.xlsx"
+                refined_xlsx_file = os.path.join(meeting_dir, f"{file_prefix}_refined.xlsx")
                 refined_xlsx_file = refine_start_times.refine_start_times(xlsx_file, refined_xlsx_file)
                 
                 print(f"Start times refined and saved to: {refined_xlsx_file}")
@@ -165,16 +192,16 @@ def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", la
     # Step 6: Convert XLSX to HTML with summaries
     print("Step 6: Generating HTML with summaries...")
     xlsx2html_path = os.path.join(script_dir, "xlsx2html.py")
-    html_file = f"{file_prefix}_speaker_summaries.html"
-    summary_file = f"{file_prefix}_meeting_summaries.html"
-    speaker_summary_file = f"{file_prefix}_speaker_summaries.md"
-    meeting_summary_md_file = f"{file_prefix}_meeting_summaries.md"
+    html_file = os.path.join(meeting_dir, f"{file_prefix}_speaker_summaries.html")
+    summary_file = os.path.join(meeting_dir, f"{file_prefix}_meeting_summaries.html")
+    speaker_summary_file = os.path.join(meeting_dir, f"{file_prefix}_speaker_summaries.md")
+    meeting_summary_md_file = os.path.join(meeting_dir, f"{file_prefix}_meeting_summaries.md")
     
     try:
         xlsx2html = import_module_from_file("xlsx2html", xlsx2html_path)
         
         # Process the refined Excel file
-        html_file, summary_file, speaker_summary_file, meeting_summary_md_file = xlsx2html.process_xlsx(
+        result_files = xlsx2html.process_xlsx(
             refined_xlsx_file,
             video_id,
             html_file,
@@ -184,8 +211,13 @@ def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", la
             meeting_summary_md_file
         )
         
-        if html_file and summary_file:
+        # Unpack result files, using the original names as fallback
+        if result_files and len(result_files) == 4:
+            html_file, summary_file, speaker_summary_file, meeting_summary_md_file = result_files
+        
+        if os.path.exists(html_file) and os.path.exists(summary_file):
             print("\nPipeline completed successfully!")
+            print(f"Files saved to: {meeting_dir}")
             print(f"Speaker links HTML: {html_file}")
             print(f"Speaker summary Markdown: {speaker_summary_file}")
             print(f"Meeting summaries HTML: {summary_file}")
@@ -205,35 +237,12 @@ def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", la
                 refine_start_times = import_module_from_file("refineStartTimes", refinement_path)
             
             # Create a version with refined timestamp mappings based on the summaries
-            refined_post = f"{file_prefix}_refined_post.xlsx"
+            refined_post = os.path.join(meeting_dir, f"{file_prefix}_refined_post.xlsx")
             refined_post = refine_start_times.refine_from_summaries(
                 refined_xlsx_file, meeting_summary_md_file, refined_post
             )
             
             print(f"Post-processed Excel file with improved timestamps: {refined_post}")
-            
-            # Optionally regenerate HTML with the refined timestamps
-            # This is commented out to avoid overwriting existing files, but can be enabled if needed
-            """
-            print("Regenerating HTML with improved timestamps...")
-            html_file_refined = f"{file_prefix}_speaker_summaries_refined.html"
-            summary_file_refined = f"{file_prefix}_meeting_summaries_refined.html"
-            speaker_summary_file_refined = f"{file_prefix}_speaker_summaries_refined.md"
-            meeting_summary_md_file_refined = f"{file_prefix}_meeting_summaries_refined.md"
-            
-            xlsx2html.process_xlsx(
-                refined_post,
-                video_id,
-                html_file_refined,
-                html_format,
-                summary_file_refined,
-                speaker_summary_file_refined,
-                meeting_summary_md_file_refined
-            )
-            
-            print(f"Refined speaker links HTML: {html_file_refined}")
-            print(f"Refined meeting summaries HTML: {summary_file_refined}")
-            """
         except Exception as e:
             print(f"Warning: Error in summary post-processing: {e}")
             print("Original summaries are still available.")
@@ -242,14 +251,15 @@ def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", la
         "video_id": video_id,
         "meeting_name": meeting_name if meeting_name else video_id,
         "file_prefix": file_prefix,
-        "srt_file": srt_file,
-        "txt_file": txt_file,
-        "xlsx_file": xlsx_file,
-        "refined_xlsx_file": refined_xlsx_file if not skip_refinement else None,
-        "html_file": html_file,
-        "summary_file": summary_file,
-        "speaker_summary_file": speaker_summary_file,
-        "meeting_summary_md_file": meeting_summary_md_file
+        "meeting_dir": meeting_dir,
+        "srt_file": os.path.join(meeting_dir, f"{file_prefix}.srt"),
+        "txt_file": os.path.join(meeting_dir, f"{file_prefix}.txt"),
+        "xlsx_file": os.path.join(meeting_dir, f"{file_prefix}.xlsx"),
+        "refined_xlsx_file": os.path.join(meeting_dir, f"{file_prefix}_refined.xlsx") if not skip_refinement else None,
+        "html_file": os.path.join(meeting_dir, f"{file_prefix}_speaker_summaries.html"),
+        "summary_file": os.path.join(meeting_dir, f"{file_prefix}_meeting_summaries.html"),
+        "speaker_summary_file": os.path.join(meeting_dir, f"{file_prefix}_speaker_summaries.md"),
+        "meeting_summary_md_file": os.path.join(meeting_dir, f"{file_prefix}_meeting_summaries.md")
     }
 
 def main():
@@ -263,6 +273,8 @@ def main():
                       help='Output format for HTML: simple or numbered (default: numbered)')
     parser.add_argument('--language', default='English_USA',
                       help='Language code for transcript (default: English_USA)')
+    parser.add_argument('--meeting-root', 
+                      help='Root directory to store meeting files (default: from MEETING_ROOT_DIR env var or "meetings")')
     parser.add_argument('--use-modified-xlsx2html', action='store_true',
                       help='Use the modified xlsx2html.py script with improved timestamp matching')
     
@@ -294,7 +306,8 @@ def main():
         url,
         args.skip_refinement,
         args.html_format,
-        args.language
+        args.language,
+        args.meeting_root
     )
 
 if __name__ == "__main__":
