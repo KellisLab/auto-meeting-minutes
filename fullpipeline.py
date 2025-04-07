@@ -26,8 +26,13 @@ import tempfile
 import subprocess
 import re
 import shutil
+import time
+import datetime
+import platform
 from pathlib import Path
 from dotenv import load_dotenv
+import xattr
+from osxmetadata import OSXMetaData
 
 # Load environment variables from .env file if present
 load_dotenv()
@@ -55,7 +60,246 @@ def sanitize_filename(name):
         name = name[:100]
     return name
 
-def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", language="English_USA", meeting_root=None):
+def extract_date_from_name(name):
+    """
+    Extract date and time information from the meeting name.
+    Expected format: YYYY.MM.DD_[Weekday][Time]
+    Examples:
+        - 2025.03.27_Thu5_20pm_Team_C_-_Compute
+        - 2024.10.15_Tue3pm_Research_Meeting
+    
+    Returns a timestamp (seconds since epoch) if successful, None otherwise
+    """
+    try:
+        # Pattern 1: YYYY.MM.DD_[Weekday][Hour]_[Minute][am/pm]
+        # Example: 2025.03.27_Thu5_20pm
+        pattern1 = r'(\d{4})\.(\d{2})\.(\d{2})_[A-Za-z]{3}(\d{1,2})_(\d{2})(am|pm)'
+        
+        # Pattern 2: YYYY.MM.DD_[Weekday][Hour][am/pm]
+        # Example: 2024.10.15_Tue3pm
+        pattern2 = r'(\d{4})\.(\d{2})\.(\d{2})_[A-Za-z]{3}(\d{1,2})(am|pm)'
+        
+        # Try the first pattern (with minutes)
+        match = re.search(pattern1, name)
+        if match:
+            year = int(match.group(1))
+            month = int(match.group(2))
+            day = int(match.group(3))
+            hour = int(match.group(4))
+            minute = int(match.group(5))
+            ampm = match.group(6).lower()
+            
+            # Adjust hour for PM
+            if ampm == 'pm' and hour < 12:
+                hour += 12
+            # Adjust for 12 AM
+            if ampm == 'am' and hour == 12:
+                hour = 0
+            
+            # Create a datetime object
+            dt = datetime.datetime(year, month, day, hour, minute)
+            return dt.timestamp()
+        
+        # Try the second pattern (without minutes)
+        match = re.search(pattern2, name)
+        if match:
+            year = int(match.group(1))
+            month = int(match.group(2))
+            day = int(match.group(3))
+            hour = int(match.group(4))
+            ampm = match.group(5).lower()
+            
+            # Adjust hour for PM
+            if ampm == 'pm' and hour < 12:
+                hour += 12
+            # Adjust for 12 AM
+            if ampm == 'am' and hour == 12:
+                hour = 0
+            
+            # Create a datetime object
+            dt = datetime.datetime(year, month, day, hour)
+            return dt.timestamp()
+        
+        return None
+    except Exception as e:
+        print(f"Warning: Could not extract date from name: {e}")
+        return None
+
+def set_file_times_macos(path, timestamp):
+    """
+    Set all possible timestamps for a file on macOS, including:
+    - Date Created (FSCreationDate)
+    - Date Modified (FSContentChangeDate) 
+    - Date Added (kMDItemDateAdded)
+    - Date Last Opened (kMDItemLastUsedDate)
+    
+    Uses a combination of:
+    - Built-in os.utime for modification and access times
+    - osxmetadata library for extended attributes using direct attribute names
+    - touch command as fallback for creation time
+    """
+    import os
+    import datetime
+    import subprocess
+    
+    try:
+        # First use built-in os.utime to set modification and access times
+        os.utime(path, (timestamp, timestamp))
+        
+        # Get absolute path
+        abs_path = os.path.abspath(path)
+        
+        # Convert timestamp to datetime object
+        dt = datetime.datetime.fromtimestamp(timestamp)
+        
+        # Try using osxmetadata library if available
+        try:
+            # Create metadata object for the file
+            md = OSXMetaData(abs_path)
+            
+            # Set last used date
+            md.kMDItemLastUsedDate = dt
+            print(f"Set last used date (kMDItemLastUsedDate) for {abs_path}")
+            
+            # Set creation date
+            md.kMDItemFSCreationDate = dt
+            print(f"Set creation date (kMDItemFSCreationDate) for {abs_path}")
+            
+            # Set content change date
+            md.kMDItemFSContentChangeDate = dt
+            print(f"Set content change date (kMDItemFSContentChangeDate) for {abs_path}")
+            
+        except ImportError:
+            print("Warning: osxmetadata library not installed, skipping extended attributes")
+        
+        # Additionally, try using touch command for creation time as fallback
+        try:
+            # Use touch command with -t flag to set creation time
+            # Format timestamp as YYYYMMDDhhmm.ss
+            time_str = dt.strftime('%Y%m%d%H%M.%S')
+            subprocess.run(['touch', '-t', time_str, abs_path], check=True)
+            print(f"Set creation time using touch command for {abs_path}")
+        except Exception as e:
+            print(f"Warning: Could not use touch command: {e}")
+        
+        # Return success if basic timestamp was set
+        return True
+    except Exception as e:
+        print(f"Warning: Could not set macOS timestamps for {path}: {e}")
+        return False
+
+def set_file_times_windows(path, timestamp):
+    """
+    Set all possible timestamps for a file on Windows, including:
+    - Date Created (ctime)
+    - Date Modified (mtime)
+    - Date Accessed (atime)
+    
+    Uses Win32 API through a PowerShell script for setting creation time
+    """
+    try:
+        # Convert timestamp to Windows PowerShell date format
+        date_str = datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Get absolute path
+        abs_path = os.path.abspath(path).replace('\\', '\\\\')
+        
+        # Create a PowerShell script that uses .NET to set both creation and last write time
+        # This is more reliable than using Get-Item/Set-ItemProperty
+        ps_script = f"""
+        $timestamp = [DateTime]::ParseExact('{date_str}', 'yyyy-MM-dd HH:mm:ss', $null)
+        $file = New-Object System.IO.FileInfo -ArgumentList '{abs_path}'
+        $file.CreationTime = $timestamp
+        $file.LastWriteTime = $timestamp
+        $file.LastAccessTime = $timestamp
+        Write-Output "Timestamps updated for {abs_path}"
+        """
+        
+        # Save script to a temporary file
+        temp_script = tempfile.NamedTemporaryFile(suffix='.ps1', delete=False)
+        temp_script_path = temp_script.name
+        with open(temp_script_path, 'w') as f:
+            f.write(ps_script)
+        temp_script.close()
+        
+        # Execute the PowerShell script
+        try:
+            result = subprocess.run(['powershell', '-ExecutionPolicy', 'Bypass', '-File', temp_script_path], 
+                                    check=True, capture_output=True, text=True)
+            if result.returncode == 0:
+                return True
+            else:
+                print(f"Warning: PowerShell script error: {result.stderr}")
+                return False
+        except subprocess.CalledProcessError as e:
+            print(f"Warning: PowerShell error setting Windows timestamps: {e}")
+            return False
+        finally:
+            # Clean up the temp script file
+            try:
+                os.unlink(temp_script_path)
+            except:
+                pass
+    except Exception as e:
+        print(f"Warning: Could not set Windows timestamps for {path}: {e}")
+        return False
+
+def set_file_times(path, timestamp):
+    """
+    Set the timestamps of a file or directory based on the current platform.
+    """
+    try:
+        # Detect operating system
+        system = platform.system()
+        
+        if system == 'Darwin':  # macOS
+            return set_file_times_macos(path, timestamp)
+        elif system == 'Windows':
+            return set_file_times_windows(path, timestamp)
+        else:  # Linux or other systems
+            # Just use standard os.utime for other platforms
+            os.utime(path, (timestamp, timestamp))
+            return True
+    except Exception as e:
+        print(f"Warning: Could not set timestamp for {path}: {e}")
+        return False
+
+def set_timestamps_for_directory(directory, timestamp):
+    """
+    Set the timestamp for a directory and all files within it.
+    """
+    success_count = 0
+    total_count = 0
+    
+    # Get operating system
+    system = platform.system()
+    
+    print(f"Setting timestamps using {system}-specific methods...")
+    
+    # Walk through the directory
+    for root, dirs, files in os.walk(directory):
+        # Set timestamps for files
+        for file in files:
+            total_count += 1
+            file_path = os.path.join(root, file)
+            if set_file_times(file_path, timestamp):
+                success_count += 1
+        
+        # Set timestamps for subdirectories
+        for dir_name in dirs:
+            total_count += 1
+            dir_path = os.path.join(root, dir_name)
+            if set_file_times(dir_path, timestamp):
+                success_count += 1
+    
+    # Set timestamp for the directory itself
+    total_count += 1
+    if set_file_times(directory, timestamp):
+        success_count += 1
+    
+    return success_count, total_count
+
+def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", language="English_USA", meeting_root=None, skip_timestamps=False):
     """Run the complete transcript processing pipeline starting from a URL"""
     
     # Use meeting_root from environment variable if not specified
@@ -247,6 +491,30 @@ def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", la
             print(f"Warning: Error in summary post-processing: {e}")
             print("Original summaries are still available.")
     
+    # Step 8: Set file and directory timestamps based on meeting date
+    if not skip_timestamps:
+        print("Step 8: Setting file and directory timestamps...")
+        
+        # Extract meeting date from folder name
+        meeting_timestamp = extract_date_from_name(meeting_folder_name)
+        
+        if meeting_timestamp:
+            # Convert timestamp to readable date for display
+            date_str = datetime.datetime.fromtimestamp(meeting_timestamp).strftime('%Y-%m-%d %H:%M:%S')
+            print(f"Extracted meeting date: {date_str}")
+            
+            # Set timestamps for all files and directories
+            success_count, total_count = set_timestamps_for_directory(meeting_dir, meeting_timestamp)
+            
+            if success_count == total_count:
+                print(f"Successfully set timestamps for all {total_count} files and directories")
+            else:
+                print(f"Set timestamps for {success_count} out of {total_count} files and directories")
+        else:
+            print("Warning: Could not extract date from meeting name, keeping original file timestamps")
+    else:
+        print("Step 8: Setting file and directory timestamps... (Skipped)")
+    
     return {
         "video_id": video_id,
         "meeting_name": meeting_name if meeting_name else video_id,
@@ -277,6 +545,8 @@ def main():
                       help='Root directory to store meeting files (default: from MEETING_ROOT_DIR env var or "meetings")')
     parser.add_argument('--use-modified-xlsx2html', action='store_true',
                       help='Use the modified xlsx2html.py script with improved timestamp matching')
+    parser.add_argument('--skip-timestamps', action='store_true',
+                      help='Skip setting file timestamps to match meeting date')
     
     args = parser.parse_args()
     
@@ -307,7 +577,8 @@ def main():
         args.skip_refinement,
         args.html_format,
         args.language,
-        args.meeting_root
+        args.meeting_root,
+        args.skip_timestamps
     )
 
 if __name__ == "__main__":
