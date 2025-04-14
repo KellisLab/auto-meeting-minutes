@@ -22,7 +22,8 @@ def convert_bold_tags(html_content):
         str: Updated HTML content with proper bold tags
     """
     # Parse the HTML content to find topic-content divs
-    pattern = r'(<div class="topic-content">)(.*?)(</div>)'
+    # pattern = r'(<div class="topic-content">)(.*?)(</div>)'
+    pattern = r'(<div class="(?:topic|topic-content)">)(.*?)(</div>)'
     
     def replace_content(match):
         div_start = match.group(1)

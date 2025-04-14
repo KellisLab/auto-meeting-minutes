@@ -222,7 +222,7 @@ def summarize_speaker_topic(speaker, topic_text, topic_number, api_key=None):
 
 def generate_enhanced_speaker_summary_html(transcript_data, video_id, html_file=None, api_key=None, summaries_data=None):
     """
-    Generate enhanced HTML with speaker summaries and multiple topics per speaker
+    Generate enhanced HTML with numbered speakers and topics with parenthesized numbers (1), (2)
     
     Args:
         transcript_data (list): List of transcript entry dictionaries
@@ -234,41 +234,51 @@ def generate_enhanced_speaker_summary_html(transcript_data, video_id, html_file=
     Returns:
         str: Generated HTML content
     """
-    html_lines = []
-    
-    # Add CSS styling
-    html_lines.append('<!DOCTYPE html>')
-    html_lines.append('<html>')
-    html_lines.append('<head>')
-    html_lines.append('<style>')
-    html_lines.append('body { font-family: Arial, sans-serif; margin: 20px; font-size: 11px; }')
-    html_lines.append('.title { font-family: Cambria, serif; font-size: 11px; color: #c0504d; text-decoration: underline; }')
-    html_lines.append('.speaker { font-weight: bold; color: #7030a0; text-decoration: underline; }')
-    html_lines.append('.topic { margin-left: 10px; }')
-    html_lines.append('.topic-title { font-weight: bold; color: #1f497d; text-decoration: underline; }')
-    html_lines.append('a { color: inherit; text-decoration: none; }')
-    html_lines.append('.timestamp { color: #1155cc; }')
-    html_lines.append('</style>')
-    html_lines.append('</head>')
-    html_lines.append('<body>')
+    # Add HTML header with styles
+    html_content = '<!DOCTYPE html>\n<html>\n<head>\n<title>Speaker Summaries</title>\n'
+    html_content += '<style>\n'
+    # Basic styling
+    html_content += 'body { font-family: Arial, sans-serif; margin: 20px; font-size: 11px; }\n'
+    # Title styling - Cambria, 11px, #c0504d, underlined
+    html_content += 'h1 { font-family: Cambria, serif; font-size: 11px; color: #c0504d; text-decoration: underline; margin-bottom: 15px; }\n'
+    html_content += 'h1 a { color: #c0504d; text-decoration: underline; }\n'
+    # Speaker styling - bold, purple, underlined
+    html_content += '.speaker { font-weight: bold; color: #7030a0; text-decoration: underline; margin-bottom: 3px; }\n'
+    # Topic styling
+    html_content += '.topic { margin-left: 0px; margin-bottom: 3px; }\n'
+    # Topic title styling - blue, underlined
+    html_content += '.topic-title { font-weight: bold; color: #1f497d; text-decoration: underline; }\n'
+    # Ordered list styling
+    html_content += 'ol { list-style-position: outside; padding-left: 12px; margin-top: 5px; }\n'
+    html_content += 'ol li { margin-bottom: 10px; }\n'
+    # Link styling
+    html_content += 'a { color: inherit; text-decoration: none; }\n'
+    html_content += '.timestamp { color: #1155cc; }\n'
+    html_content += '</style>\n</head>\n<body>\n'
     
     # Try to extract a title from the file path
     try:
         folder_name = os.path.basename(os.path.dirname(html_file))
         formatted_name = folder_name.replace('_', ' ')
         video_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}'
-        html_lines.append(f'<h1 class="title"><a href="{video_link}">{formatted_name} <span style="color: #1155cc;">(link)</span></a></h1>')
+        html_content += f'<h1><a href="{video_link}">{formatted_name} <span style="color: #1155cc;">(link)</span></a></h1>\n'
     except:
-        html_lines.append('<h1 class="title">Meeting Summary</h1>')
+        html_content += '<h1>Speaker Summaries</h1>\n'
     
     # Get summaries data if not provided
     if summaries_data is None:
+        if not api_key:
+            from utils import get_api_key
+            api_key = get_api_key()
         summaries_data = generate_speaker_summaries_data(transcript_data, api_key)
     
+    # Create an ordered list for speakers
+    html_content += '<ol>\n'
+    
     # Process each speaker
-    for speaker, topics in summaries_data.items():
-        # Speaker name as header with proper styling
-        html_lines.append(f'<div class="speaker">{speaker}</div>')
+    for speaker_idx, (speaker, topics) in enumerate(summaries_data.items(), 1):
+        # Speaker name as a list item with proper styling
+        html_content += f'<li><div class="speaker">{speaker}</div>\n'
         
         # Process each topic for this speaker
         for i, topic in enumerate(topics, 1):
@@ -280,29 +290,26 @@ def generate_enhanced_speaker_summary_html(transcript_data, video_id, html_file=
             timestamp_str = topic['start_time']
             video_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}&start={timestamp_seconds}'
             
-            # Add the topic with number, timestamp and summary
-            # Topic title is now in blue (#1f497d) and underlined
-            html_lines.append(f'<div class="topic">(<span class="topic-title">{i}) {topic_summary["title"]}</span> <a href="{video_link}"><span class="timestamp">({timestamp_str})</span></a>: {topic_summary["content"]}</div>')
+            # Add the topic with number in parentheses (1), (2), etc.
+            html_content += f'<div class="topic">(<span class="topic-title">{i}) {topic_summary["title"]}</span> <a href="{video_link}"><span class="timestamp">({timestamp_str})</span></a>: {topic_summary["content"]}</div>\n'
             
-            # Add a line break (shift return) between topics if not the last topic
-            if i < len(topics):
-                html_lines.append('<br>')
+            # # Add a line break between topics if not the last topic
+            # if i < len(topics):
+            #     html_content += '<br>\n'
         
-        # Add blank line between speakers if not the last speaker
-        if speaker != list(summaries_data.keys())[-1]:
-            html_lines.append('<br>')
+        # Close the list item for this speaker
+        html_content += '</li>\n'
     
-    # Close HTML tags
-    html_lines.append('</body>')
-    html_lines.append('</html>')
+    # Close the ordered list and HTML
+    html_content += '</ol>\n</body>\n</html>'
     
     # Write to file if specified
     if html_file:
         with open(html_file, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(html_lines))
-        print(f"Generated enhanced speaker summary HTML: {html_file}")
+            f.write(html_content)
+        print(f"Generated enhanced speaker summary HTML with numbered speakers: {html_file}")
     
-    return '\n'.join(html_lines)
+    return html_content
 
 def generate_enhanced_speaker_summary_markdown(transcript_data, video_id, md_file=None, api_key=None, summaries_data=None):
     """
