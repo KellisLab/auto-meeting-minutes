@@ -43,21 +43,17 @@ from utils import (
     find_best_timestamp_match,
     update_speaker_timestamps_for_topics,
     extract_topics_from_summary,
-    get_api_key
+    get_api_key,
 )
 
-# Import enhanced speaker summary utilities if available
-try:
-    from speaker_summary_utils import (
-        enhance_speaker_tracking,
-        summarize_speaker_topic,
-        generate_enhanced_speaker_summary_markdown,
-        generate_enhanced_speaker_summary_html,
-        generate_speaker_summaries_data
-    )
-    ENHANCED_SUMMARIES_AVAILABLE = True
-except ImportError:
-    ENHANCED_SUMMARIES_AVAILABLE = False
+from speaker_summary_utils import (
+    enhance_speaker_tracking,
+    summarize_speaker_topic,
+    generate_enhanced_speaker_summary_markdown,
+    generate_enhanced_speaker_summary_html,
+    generate_speaker_summaries_data,
+)
+
 
 # -------------------------------------------------------------
 # Constants and Configuration
@@ -69,440 +65,341 @@ OPENAI_API_KEY = os.getenv("API_KEY")
 MODEL = os.getenv("GPT_MODEL", "gpt-4o")
 # Default batch size for meeting summaries (in minutes)
 DEFAULT_BATCH_SIZE_MINUTES = 40
+ENHANCED_SUMMARIES_AVAILABLE = True
+
 
 # -------------------------------------------------------------
 # HTML and Markdown Generation Functions
 # -------------------------------------------------------------
-def generate_meeting_summaries_html(batches, batch_summaries, video_id, html_file, transcript_data=None):
+def generate_meeting_summaries_html(
+    batches, batch_summaries, video_id, html_file, transcript_data=None
+):
     """
     Generate HTML file with meeting batch summaries that include clickable timestamp links
     for both batches and individual topics within each batch.
     Topics are sorted chronologically by timestamp across all batches.
-    
+
     Args:
         batches (list): List of batch entries
         batch_summaries (list): List of batch summaries
         video_id (str): Panopto video ID
         html_file (str): Output HTML file path
         transcript_data (list, optional): Full transcript data for better timestamp matching
-        
+
     Returns:
         str: Path to the generated HTML file
     """
     # Initialize separate lists for heading and list items
     heading_html = ""
     list_items_html = []
-    
+
     try:
         folder_name = os.path.basename(os.path.dirname(html_file))
-        formatted_name = folder_name.replace('_', ' ')
-        video_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}'
+        formatted_name = folder_name.replace("_", " ")
+        video_link = (
+            f"https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}"
+        )
         # Modified title with (link) in blue - now stored separately from list items
         heading_html = f'<h1><a href="{video_link}">{formatted_name} <span style="color: #1155cc;">(link)</span></a></h1>'
     except:
-        heading_html = '<h1>Meeting Summary</h1>'
-    
+        heading_html = "<h1>Meeting Summary</h1>"
+
     # Extract all topics from all batches
     all_topics = []
-    
+
     for i, (batch, summary) in enumerate(zip(batches, batch_summaries), 1):
         # Extract topics from the summary with their timestamps
         topics = extract_topics_from_summary(summary, video_id, transcript_data)
-        
+
         # If we have transcript data, update the topic timestamps to better match content
         if transcript_data:
             topics = update_speaker_timestamps_for_topics(topics, transcript_data)
-        
+
         # Add batch index for reference
         for topic in topics:
-            topic['batch_index'] = i
-            topic['batch'] = batch
-        
+            topic["batch_index"] = i
+            topic["batch"] = batch
+
         all_topics.extend(topics)
-    
+
     # Sort all topics by timestamp_seconds
-    all_topics.sort(key=lambda x: x['timestamp_seconds'] if x['timestamp_seconds'] is not None else float('inf'))
-    
+    all_topics.sort(
+        key=lambda x: (
+            x["timestamp_seconds"]
+            if x["timestamp_seconds"] is not None
+            else float("inf")
+        )
+    )
+
     # Process each topic
     for idx, topic_info in enumerate(all_topics, 1):
-        topic = topic_info['topic']
-        speaker = topic_info['speaker']
-        content = topic_info['content']
-        batch = topic_info['batch']
-        
+        topic = topic_info["topic"]
+        speaker = topic_info["speaker"]
+        content = topic_info["content"]
+        batch = topic_info["batch"]
+
         # Check if the topic has a direct timestamp link
-        if topic_info['video_link'] and topic_info['timestamp_seconds'] is not None:
+        if topic_info["video_link"] and topic_info["timestamp_seconds"] is not None:
             # Use the direct link from the timestamp in the summary
-            topic_link = topic_info['video_link']
-            seconds = topic_info['timestamp_seconds']
-            
+            topic_link = topic_info["video_link"]
+            seconds = topic_info["timestamp_seconds"]
+
             # Verify the timestamp matches the seconds value
             # If not, get a corrected timestamp
-            corrected_timestamp = verify_timestamp_format(topic_info['timestamp'], seconds)
-            
+            corrected_timestamp = verify_timestamp_format(
+                topic_info["timestamp"], seconds
+            )
+
             # Add topic as a numbered list item with direct link and corrected timestamp in blue
-            list_items_html.append(f'<li><h3 class="topic-heading"><a href="{topic_link}" class="topic-link">{topic} - {speaker} <span style="color: #1155cc;">({corrected_timestamp})</span></a></h3>')
+            list_items_html.append(
+                f'<li><h3 class="topic-heading"><a href="{topic_link}" class="topic-link">{topic} - {speaker} <span style="color: #1155cc;">({corrected_timestamp})</span></a></h3>'
+            )
         else:
             # Fallback: Find the entry for this speaker in the batch
             speaker_entry = None
             for entry in batch:
-                if entry['name'] == speaker:
+                if entry["name"] == speaker:
                     speaker_entry = entry
                     break
-            
+
             # If we found the entry, create a link to it
             if speaker_entry:
-                speaker_seconds = speaker_entry['seconds']
-                speaker_time = verify_timestamp_format(speaker_entry.get('time_str', ''), speaker_seconds)
-                topic_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}&start={speaker_seconds}'
-                
+                speaker_seconds = speaker_entry["seconds"]
+                speaker_time = verify_timestamp_format(
+                    speaker_entry.get("time_str", ""), speaker_seconds
+                )
+                topic_link = f"https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}&start={speaker_seconds}"
+
                 # Add topic as a numbered list item with link from entry and blue timestamp
-                list_items_html.append(f'<li><h3 class="topic-heading"><a href="{topic_link}" class="topic-link">{topic} - {speaker} <span style="color: #1155cc;">({speaker_time})</span></a></h3>')
+                list_items_html.append(
+                    f'<li><h3 class="topic-heading"><a href="{topic_link}" class="topic-link">{topic} - {speaker} <span style="color: #1155cc;">({speaker_time})</span></a></h3>'
+                )
             else:
                 # If no entry found, just display the topic without a link
-                list_items_html.append(f'<li><h3 class="topic-heading">{topic} - {speaker}</h3>')
-        
+                list_items_html.append(
+                    f'<li><h3 class="topic-heading">{topic} - {speaker}</h3>'
+                )
+
         # Add the content for this topic
         list_items_html.append(f'<div class="topic-content">{content}</div></li>')
-    
+
     # Combine all lines into HTML
-    html_content = '<!DOCTYPE html>\n<html>\n<head>\n<title>Meeting Summaries</title>\n'
-    html_content += '<style>\n'
-    html_content += 'body { font-family: Arial, sans-serif; margin: 20px; font-size: 11px; }\n'
-    html_content += 'ol { list-style-position: outside; padding-left: 12px; margin-top: 10px; }\n'
-    html_content += 'ol li { margin-bottom: 1px; }\n'
-    html_content += '.topic-content { margin-bottom: 0px; font-family: Arial, sans-serif; font-size: 11px; margin-top: 0px; }\n'
+    html_content = "<!DOCTYPE html>\n<html>\n<head>\n<title>Meeting Summaries</title>\n"
+    html_content += "<style>\n"
+    html_content += (
+        "body { font-family: Arial, sans-serif; margin: 20px; font-size: 11px; }\n"
+    )
+    html_content += (
+        "ol { list-style-position: outside; padding-left: 12px; margin-top: 10px; }\n"
+    )
+    html_content += "ol li { margin-bottom: 1px; }\n"
+    html_content += ".topic-content { margin-bottom: 0px; font-family: Arial, sans-serif; font-size: 11px; margin-top: 0px; }\n"
     # Title styling - Cambria, 11px, #c0504d, underlined
-    html_content += 'h1 { font-family: Cambria, serif; font-size: 11px; color: #c0504d; text-decoration: underline; }\n'
-    html_content += 'h1 a { color: #c0504d; text-decoration: underline; }\n'
+    html_content += "h1 { font-family: Cambria, serif; font-size: 11px; color: #c0504d; text-decoration: underline; }\n"
+    html_content += "h1 a { color: #c0504d; text-decoration: underline; }\n"
     # Topic styling - Arial, 11px, #7030a0, underlined
-    html_content += 'h3.topic-heading { font-family: Arial, sans-serif; font-size: 11px; color: #7030a0; text-decoration: underline; margin-top: 0px; margin-bottom: 1px; }\n'
-    html_content += 'a { color: inherit; }\n'
-    html_content += '.topic-link { text-decoration: underline; color: #7030a0; }\n'
-    html_content += '.topic-link span { text-decoration: underline; }\n'
-    html_content += 'b { font-weight: bold; }\n'
-    html_content += '</style>\n</head>\n<body>\n'
-    
+    html_content += "h3.topic-heading { font-family: Arial, sans-serif; font-size: 11px; color: #7030a0; text-decoration: underline; margin-top: 0px; margin-bottom: 1px; }\n"
+    html_content += "a { color: inherit; }\n"
+    html_content += ".topic-link { text-decoration: underline; color: #7030a0; }\n"
+    html_content += ".topic-link span { text-decoration: underline; }\n"
+    html_content += "b { font-weight: bold; }\n"
+    html_content += "</style>\n</head>\n<body>\n"
+
     # Add the heading BEFORE the ordered list
-    html_content += heading_html + '\n'
-    
+    html_content += heading_html + "\n"
+
     # Wrap list items in an ordered list
-    html_content += '<ol>\n'
-    html_content += '\n'.join(list_items_html)
-    html_content += '\n</ol>\n</body>\n</html>'
-    
+    html_content += "<ol>\n"
+    html_content += "\n".join(list_items_html)
+    html_content += "\n</ol>\n</body>\n</html>"
+
     # Write the file
-    with open(html_file, 'w', encoding='utf-8') as f:
+    with open(html_file, "w", encoding="utf-8") as f:
         f.write(html_content)
-    
+
     print(f"Generated meeting summaries HTML with verified timestamps: {html_file}")
     return html_file
 
-def generate_meeting_summaries_markdown(batches, batch_summaries, video_id, md_file, transcript_data=None):
+
+def generate_meeting_summaries_markdown(
+    batches, batch_summaries, video_id, md_file, transcript_data=None
+):
     """
     Generate Markdown file with meeting batch summaries that include clickable timestamp links
     for both batches and individual topics within each batch.
     Topics are sorted chronologically by timestamp, and timestamps are verified to match URL seconds.
-    
+
     Args:
         batches (list): List of batch entries
         batch_summaries (list): List of batch summaries
         video_id (str): Panopto video ID
         md_file (str): Output Markdown file path
         transcript_data (list, optional): Full transcript data for better timestamp matching
-        
+
     Returns:
         str: Path to the generated Markdown file
     """
     md_lines = []
     try:
         folder_name = os.path.basename(os.path.dirname(md_file))
-        formatted_name = folder_name.replace('_', ' ')
-        video_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}'
-        md_lines.append(f'# [{formatted_name} - Meeting Summary]({video_link})\n')
+        formatted_name = folder_name.replace("_", " ")
+        video_link = (
+            f"https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}"
+        )
+        md_lines.append(f"# [{formatted_name} - Meeting Summary]({video_link})\n")
     except:
-        md_lines.append('# Meeting Summary\n')
+        md_lines.append("# Meeting Summary\n")
     # Extract all topics from all batches
     all_topics = []
-    
+
     for i, (batch, summary) in enumerate(zip(batches, batch_summaries), 1):
         # Extract topics from the summary with their timestamps
         topics = extract_topics_from_summary(summary, video_id, transcript_data)
-        
+
         # If we have transcript data, update the topic timestamps to better match content
         if transcript_data:
             topics = update_speaker_timestamps_for_topics(topics, transcript_data)
-        
+
         # Add batch index for reference
         for topic in topics:
-            topic['batch_index'] = i
-            topic['batch'] = batch
-        
+            topic["batch_index"] = i
+            topic["batch"] = batch
+
         all_topics.extend(topics)
-    
+
     # Sort all topics by timestamp_seconds
-    all_topics.sort(key=lambda x: x['timestamp_seconds'] if x['timestamp_seconds'] is not None else float('inf'))
-    
+    all_topics.sort(
+        key=lambda x: (
+            x["timestamp_seconds"]
+            if x["timestamp_seconds"] is not None
+            else float("inf")
+        )
+    )
+
     # Process each topic
     for topic_info in all_topics:
-        topic = topic_info['topic']
-        speaker = topic_info['speaker']
-        content = topic_info['content']
-        batch = topic_info['batch']
-        
+        topic = topic_info["topic"]
+        speaker = topic_info["speaker"]
+        content = topic_info["content"]
+        batch = topic_info["batch"]
+
         # Check if the topic has a direct timestamp link
-        if topic_info['video_link'] and topic_info['timestamp_seconds'] is not None:
+        if topic_info["video_link"] and topic_info["timestamp_seconds"] is not None:
             # Use the direct link from the timestamp in the summary
-            topic_link = topic_info['video_link']
-            seconds = topic_info['timestamp_seconds']
-            
+            topic_link = topic_info["video_link"]
+            seconds = topic_info["timestamp_seconds"]
+
             # Verify the timestamp matches the seconds value
             # If not, get a corrected timestamp
-            corrected_timestamp = verify_timestamp_format(topic_info['timestamp'], seconds)
-            
+            corrected_timestamp = verify_timestamp_format(
+                topic_info["timestamp"], seconds
+            )
+
             # Add topic as a subheading with direct link and corrected timestamp
-            md_lines.append(f'**{topic} - {speaker}** [({corrected_timestamp})]({topic_link})')
+            md_lines.append(
+                f"**{topic} - {speaker}** [({corrected_timestamp})]({topic_link})"
+            )
         else:
             # Fallback: Find the entry for this speaker in the batch
             speaker_entry = None
             for entry in batch:
-                if entry['name'] == speaker:
+                if entry["name"] == speaker:
                     speaker_entry = entry
                     break
-            
+
             # If we found the entry, create a link to it
             if speaker_entry:
-                speaker_seconds = speaker_entry['seconds']
-                speaker_time = verify_timestamp_format(speaker_entry.get('time_str', ''), speaker_seconds)
-                topic_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}&start={speaker_seconds}'
-                
+                speaker_seconds = speaker_entry["seconds"]
+                speaker_time = verify_timestamp_format(
+                    speaker_entry.get("time_str", ""), speaker_seconds
+                )
+                topic_link = f"https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}&start={speaker_seconds}"
+
                 # Add topic as a subheading with link from entry
-                md_lines.append(f'### {topic} - {speaker} [({speaker_time})]({topic_link})')
+                md_lines.append(
+                    f"### {topic} - {speaker} [({speaker_time})]({topic_link})"
+                )
             else:
                 # If no entry found, just display the topic without a link
-                md_lines.append(f'### {topic} - {speaker}\n')
-        
+                md_lines.append(f"### {topic} - {speaker}\n")
+
         # Add the content for this topic
-        md_lines.append(f'{content}\n')
-    
+        md_lines.append(f"{content}\n")
+
     # Write the file
-    with open(md_file, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(md_lines))
-    
+    with open(md_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(md_lines))
+
     print(f"Generated meeting summaries markdown with verified timestamps: {md_file}")
     return md_file
 
-def generate_speaker_summary_html(speaker_links, transcript_data, video_id, speaker_summary_file=None):
-    """
-    Generate HTML in numbered format with line breaks and summaries
-    
-    Args:
-        speaker_links (list): List of speaker link dictionaries
-        transcript_data (list): List of transcript entry dictionaries
-        video_id (str): Panopto video ID
-        speaker_summary_file (str, optional): Path to output HTML file
-        
-    Returns:
-        list: List of HTML lines
-    """
-    html_lines = []
-    
-    # Add container div
-    html_lines.append('<h2>Direct Links:</h2>')
-    
-    # Generate the numbered list
-    for i, speaker in enumerate(speaker_links, 1):
-        name = speaker['name']
-        seconds = speaker['seconds']
-        time_str = speaker['time_str']
-        
-        # Create the HTML link
-        link = f'{i}. {name} (<a href="https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}&start={seconds}">{time_str}</a>)'
-        html_lines.append(link)
-        
-        # Find summary for this speaker
-        speaker_entries = [entry for entry in transcript_data if entry['name'] == name]
-        if speaker_entries and 'summary' in speaker_entries[0]:
-            html_lines.append(f'<div>{speaker_entries[0]["summary"]}</div>')
-        
-        html_lines.append('<br>')
-    
-    # Close the div
-    html_lines.append('</div>')
-    
-    # Write to file if specified
-    if speaker_summary_file:
-        with open(speaker_summary_file, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(html_lines))
-        print(f"Generated speaker summary HTML: {speaker_summary_file}")
-    
-    return html_lines
-
-def generate_speaker_summary_markdown(speaker_links, transcript_data, video_id, md_file=None):
-    """
-    Generate Markdown with speaker summaries and timestamp links
-    
-    Args:
-        speaker_links (list): List of speaker link dictionaries
-        transcript_data (list): List of transcript entry dictionaries
-        video_id (str): Panopto video ID
-        md_file (str, optional): Path to output markdown file
-        
-    Returns:
-        list: List of Markdown lines
-    """
-    md_lines = []
-    
-    # Add container div
-    md_lines.append('# Speaker Summary')
-    
-    # Generate the numbered list
-    for i, speaker in enumerate(speaker_links, 1):
-        name = speaker['name']
-        seconds = speaker['seconds']
-        time_str = speaker['time_str']
-        
-        # Create the Markdown link
-        link = f'{i}. **{name}** [({time_str})](https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}&start={seconds}) - '
-        md_lines.append(link)
-        
-        # Find summary for this speaker
-        speaker_entries = [entry for entry in transcript_data if entry['name'] == name]
-        if speaker_entries and 'summary' in speaker_entries[0]:
-            md_lines.append(f'{speaker_entries[0]["summary"]}\n')
-        else:
-            # Find a significant dialog from this speaker
-            significant_texts = [entry['text'] for entry in transcript_data if entry['name'] == name]
-            if significant_texts:
-                # Get the longest text as a representative sample
-                longest_text = max(significant_texts, key=len)
-                summary = f"Speaker discussed: {longest_text[:100]}..."
-                md_lines.append(f'{summary}\n')
-    
-    # Write to file if specified
-    if md_file:
-        with open(md_file, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(md_lines))
-        print(f"Generated speaker summary markdown: {md_file}")
-    
-    return md_lines
-
-# -------------------------------------------------------------
-# OpenAI Summarization Functions
-# -------------------------------------------------------------
-def summarize_speaker(speaker_name, speaker_entries, api_key):
-    """
-    Summarize contributions from a specific speaker
-    
-    Args:
-        speaker_name (str): Speaker name
-        speaker_entries (list): List of transcript entries for this speaker
-        api_key (str): OpenAI API key
-        
-    Returns:
-        str: Summary of speaker contributions
-    """
-    if not api_key:
-        return "API key not provided. Summaries not generated."
-    
-    # Collect all text from this speaker
-    speaker_text = ""
-    for entry in speaker_entries:
-        speaker_text += f"[{entry['time_str']}] {entry['text']}\n\n"
-    
-    if not speaker_text.strip():
-        return "No text available for summarization."
-    
-    try:
-        openai.api_key = api_key
-        
-        # Construct prompt
-        prompt = (
-            "Summarize this speaker's contributions in one paragraph. "
-            "Start with the key topic, then provide a summary (no line breaks). "
-            "Example format: 'Optimization of UMAP and JSON Communication: Adam Smith presented specific...' "
-            "Be technical, clear, and precise. Don't hallucinate. "
-            "Use bolding for important words and concepts, but not for the speaker name.\n\n"
-            f"TRANSCRIPT ENTRIES FOR {speaker_name}:\n\n{speaker_text}"
-        )
-        
-        # Using chat completions API
-        response = openai.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": "You are a technical meeting summarizer."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=400,
-        )
-        
-        return response.choices[0].message.content.strip()
-    
-    except Exception as e:
-        return f"Error generating summary: {str(e)}"
 
 def summarize_batch(batch_entries, batch_number, api_key):
     """
     Summarize a batch of transcript entries using OpenAI API
-    
+
     Args:
         batch_entries (list): List of transcript entries for this batch
         batch_number (int): Batch number for identification
         api_key (str): OpenAI API key
-        
+
     Returns:
         str: Batch summary with topics and timestamps
     """
     if not api_key:
         return "API key not provided. Summaries not generated."
-    
+
     # Extract batch text
     batch_text = extract_text_for_batch(batch_entries)
-    
+
     if not batch_text.strip():
         return "No text available for summarization."
-    
+
     # Get start and end times
-    start_seconds = min(entry['seconds'] for entry in batch_entries)
+    start_seconds = min(entry["seconds"] for entry in batch_entries)
     # End time is either explicit end_seconds or last entry
-    if any('end_seconds' in entry for entry in batch_entries):
+    if any("end_seconds" in entry for entry in batch_entries):
         # Use the max end_seconds if available
-        end_seconds = max(entry.get('end_seconds', entry['seconds']) for entry in batch_entries)
+        end_seconds = max(
+            entry.get("end_seconds", entry["seconds"]) for entry in batch_entries
+        )
     else:
         # Otherwise use the last entry in the batch
-        end_seconds = max(entry['seconds'] for entry in batch_entries)
-    
+        end_seconds = max(entry["seconds"] for entry in batch_entries)
+
     start_time = seconds_to_time_str(start_seconds)
     end_time = seconds_to_time_str(end_seconds)
-    
+
     # Create a mapping of speaker names to ALL their timestamps for this batch
     speaker_timestamps = {}
     for entry in batch_entries:
-        speaker = entry['name']
+        speaker = entry["name"]
         if speaker not in speaker_timestamps:
             speaker_timestamps[speaker] = []
-        
+
         # Add this timestamp to the list for this speaker
-        speaker_timestamps[speaker].append({
-            'seconds': entry['seconds'],
-            'time_str': entry['time_str'],
-            'text': entry['text'][:100]  # Include a snippet of text for context
-        })
-    
+        speaker_timestamps[speaker].append(
+            {
+                "seconds": entry["seconds"],
+                "time_str": entry["time_str"],
+                "text": entry["text"][:100],  # Include a snippet of text for context
+            }
+        )
+
     # Prepare the timestamp reference for the model
     timestamp_reference = "SPEAKER TIMESTAMPS (DO NOT MODIFY THESE):\n"
     for speaker, timestamps in speaker_timestamps.items():
         # Sort timestamps chronologically
-        sorted_timestamps = sorted(timestamps, key=lambda x: x['seconds'])
-        
+        sorted_timestamps = sorted(timestamps, key=lambda x: x["seconds"])
+
         # Include all timestamps for the speaker with context snippets
         timestamp_reference += f"{speaker}:\n"
         for i, ts in enumerate(sorted_timestamps, 1):
             timestamp_reference += f"  {i}. {ts['time_str']} - '{ts['text']}...'\n"
-    
+
     try:
         openai.api_key = api_key
-        
+
         # Construct prompt for batch summary with explicit timestamp instruction
         prompt = (
             "Your task is to create a structured summary of this meeting section.\n\n"
@@ -513,63 +410,66 @@ def summarize_batch(batch_entries, batch_number, api_key):
             "3. Use only exact timestamps from the provided SPEAKER TIMESTAMPS section\n"
             "4. BOLD important terms within the content: **terms**\n"
             "5. Content should be in paragraph form (no bullet points or line breaks)\n\n"
-            
             "TIMESTAMP SELECTION RULES:\n"
             "1. Choose the MOST RELEVANT timestamp from the provided options for each speaker\n"
             "2. Match the timestamp to where the specific topic is actually discussed\n"
             "3. NEVER create or modify timestamps - use only those provided\n\n"
-            
             "CONTENT REQUIREMENTS:\n"
             "1. Thoroughly explain each key idea with technical precision\n"
             "2. Include interactions between different speakers\n"
             "3. Be detailed and comprehensive\n"
             "4. Do not hallucinate information\n"
             "5. Do not include a concluding summary paragraph\n\n"
-            
             f"SPEAKER TIMESTAMPS (DO NOT MODIFY THESE):\n{timestamp_reference}\n\n"
             f"MEETING TRANSCRIPT BATCH #{batch_number} ({start_time} - {end_time}):\n\n{batch_text}"
         )
-        
+
         # Using chat completions API
         response = openai.chat.completions.create(
             model=MODEL,
             messages=[
-                {"role": "system", "content": "You are a technical meeting summarizer. NEVER modify the timestamps provided to you."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": "You are a technical meeting summarizer. NEVER modify the timestamps provided to you.",
+                },
+                {"role": "user", "content": prompt},
             ],
             max_tokens=10000,  # More tokens for batch summaries
         )
-        
+
         summary = response.choices[0].message.content.strip()
-        
+
         # Post-process to verify timestamps are from the provided list
         for speaker, timestamps in speaker_timestamps.items():
             # Create a set of valid timestamps for this speaker
-            valid_timestamps = {ts['time_str'] for ts in timestamps}
-            
+            valid_timestamps = {ts["time_str"] for ts in timestamps}
+
             # Look for patterns like "**Topic - Speaker** (H:MM:SS):" with timestamps
             pattern = f"\\*\\*[^*]+ - {re.escape(speaker)}\\*\\* \\(([0-9]:[0-9]{{2}}:[0-9]{{2}})\\)"
             matches = re.finditer(pattern, summary)
-            
+
             for match in matches:
                 found_timestamp = match.group(1)
-                
+
                 # Check if the timestamp is valid for this speaker
                 if found_timestamp not in valid_timestamps:
                     # Use the first timestamp as fallback
-                    fallback_timestamp = timestamps[0]['time_str']
-                    
+                    fallback_timestamp = timestamps[0]["time_str"]
+
                     # Replace the incorrect timestamp with a valid one
                     summary = summary.replace(
                         f"**{match.group(0).split('**')[1]}** ({found_timestamp})",
-                        f"**{match.group(0).split('**')[1]}** ({fallback_timestamp})"
+                        f"**{match.group(0).split('**')[1]}** ({fallback_timestamp})",
                     )
-                    print(f"Warning: Replaced invalid timestamp {found_timestamp} with {fallback_timestamp} for {speaker}")
-        
+                    print(
+                        f"Warning: Replaced invalid timestamp {found_timestamp} with {fallback_timestamp} for {speaker}"
+                    )
+
         return summary
-    
+
     except Exception as e:
         return f"Error generating batch summary: {str(e)}"
+
 
 # -------------------------------------------------------------
 # Main Processing Function
@@ -580,12 +480,19 @@ Optimized speaker summary generation integration for xlsx2html.py
 
 # Update the process_xlsx function in xlsx2html.py to use the optimized approach:
 
-def process_xlsx(xlsx_file, video_id, html_file=None, speaker_summary_file=None, 
-                meeting_summary_md_file=None, batch_size_minutes=DEFAULT_BATCH_SIZE_MINUTES,
-                use_enhanced_summaries=False):
+
+def process_xlsx(
+    xlsx_file,
+    video_id,
+    html_file=None,
+    speaker_summary_file=None,
+    meeting_summary_md_file=None,
+    batch_size_minutes=DEFAULT_BATCH_SIZE_MINUTES,
+    use_enhanced_summaries=False,
+):
     """
     Process Excel file to generate HTML links with summaries and meeting summaries
-    
+
     Args:
         xlsx_file (str): Path to input Excel file
         video_id (str): Panopto video ID
@@ -594,49 +501,51 @@ def process_xlsx(xlsx_file, video_id, html_file=None, speaker_summary_file=None,
         meeting_summary_md_file (str, optional): Path to output Markdown file for meeting summaries
         batch_size_minutes (int, optional): Batch size in minutes (default: DEFAULT_BATCH_SIZE_MINUTES)
         use_enhanced_summaries (bool, optional): Whether to use enhanced speaker summaries
-        
+
     Returns:
         tuple: Paths to the generated files (html_file, summary_file, speaker_summary_file, meeting_summary_md_file)
     """
     if html_file is None:
-        html_file = os.path.splitext(xlsx_file)[0] + '_speaker_summaries.html'
-    
+        html_file = os.path.splitext(xlsx_file)[0] + "_speaker_summaries.html"
+
     if speaker_summary_file is None:
-        speaker_summary_file = os.path.splitext(xlsx_file)[0] + '_speaker_summaries.md'
-    
-    summary_file = os.path.splitext(xlsx_file)[0] + '_meeting_summaries.html'
-    
+        speaker_summary_file = os.path.splitext(xlsx_file)[0] + "_speaker_summaries.md"
+
+    summary_file = os.path.splitext(xlsx_file)[0] + "_meeting_summaries.html"
+
     if meeting_summary_md_file is None:
-        meeting_summary_md_file = os.path.splitext(xlsx_file)[0] + '_meeting_summaries.md'
-    
+        meeting_summary_md_file = (
+            os.path.splitext(xlsx_file)[0] + "_meeting_summaries.md"
+        )
+
     # Ensure video_id is provided
     if not video_id:
         raise ValueError("Panopto video ID is required")
-    
+
     # Get OpenAI API key
     api_key = get_api_key()
     if not api_key:
         print("Warning: OpenAI API key not provided. Summaries will not be generated.")
         return None, None, None, None
-    
+
     try:
         # Read the Excel file
         df = pd.read_excel(xlsx_file)
-        
+
         # Extract speaker links
         speaker_links = extract_unique_speakers(df)
-        
+
         # Extract full transcript data
         transcript_data = extract_transcript_data(df)
-        
+
         # Use enhanced speaker summaries if requested and available
         if use_enhanced_summaries and ENHANCED_SUMMARIES_AVAILABLE:
             print("Using enhanced speaker summaries with multiple topic support...")
-            
+
             # Generate summaries data once - this avoids duplicate API calls
             print("Generating speaker topic summaries...")
             summaries_data = generate_speaker_summaries_data(transcript_data, api_key)
-            
+
             # Generate enhanced speaker summary markdown
             if speaker_summary_file:
                 generate_enhanced_speaker_summary_markdown(
@@ -644,10 +553,12 @@ def process_xlsx(xlsx_file, video_id, html_file=None, speaker_summary_file=None,
                     video_id,
                     speaker_summary_file,
                     api_key,
-                    summaries_data  # Pass the pre-generated summaries
+                    summaries_data,  # Pass the pre-generated summaries
                 )
-                print(f"Generated enhanced speaker summary markdown: {speaker_summary_file}")
-            
+                print(
+                    f"Generated enhanced speaker summary markdown: {speaker_summary_file}"
+                )
+
             # Generate enhanced speaker summary HTML
             if html_file:
                 generate_enhanced_speaker_summary_html(
@@ -655,127 +566,126 @@ def process_xlsx(xlsx_file, video_id, html_file=None, speaker_summary_file=None,
                     video_id,
                     html_file,
                     api_key,
-                    summaries_data  # Pass the pre-generated summaries
+                    summaries_data,  # Pass the pre-generated summaries
                 )
                 print(f"Generated enhanced speaker summary HTML: {html_file}")
-        else:
-            # Process speaker summaries using the traditional method
-            print(f"Generating summaries for {len(speaker_links)} speakers...")
-            for i, speaker in enumerate(speaker_links):
-                name = speaker['name']
-                print(f"Processing speaker {i+1}/{len(speaker_links)}: {name}")
-                
-                # Get all entries for this speaker
-                speaker_entries = [entry for entry in transcript_data if entry['name'] == name]
-                
-                # Generate summary
-                if speaker_entries:
-                    summary = summarize_speaker(name, speaker_entries, api_key)
-                    
-                    # Add summary to all entries for this speaker
-                    for entry in speaker_entries:
-                        entry['summary'] = summary
-            
-            # Generate HTML output
-            html_lines = generate_speaker_summary_html(speaker_links, transcript_data, video_id, html_file)
-            
-            # Write the HTML file
-            with open(html_file, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(html_lines))
-            
-            # Generate speaker summary markdown (traditional format)
-            speaker_summary_lines = generate_speaker_summary_markdown(speaker_links, transcript_data, video_id, speaker_summary_file)
-            
-            print(f"Generated speaker summary markdown: {speaker_summary_file}")
-            print(f"Generated HTML with links and summaries: {html_file}")
-        
+
         # Create time-based batches directly from transcript data
         print("Creating time-based batches for meeting summaries...")
         batches = create_time_batches(transcript_data, batch_size_minutes)
         print(f"Created {len(batches)} batches")
-        
+
         # Generate batch summaries
         batch_summaries = []
         for i, batch in enumerate(batches, 1):
             # Get start and end times for this batch
-            start_seconds = min(entry['seconds'] for entry in batch)
+            start_seconds = min(entry["seconds"] for entry in batch)
             # End time is either explicit end_seconds or last entry
-            if any('end_seconds' in entry for entry in batch):
-                end_seconds = max(entry.get('end_seconds', entry['seconds']) for entry in batch)
+            if any("end_seconds" in entry for entry in batch):
+                end_seconds = max(
+                    entry.get("end_seconds", entry["seconds"]) for entry in batch
+                )
             else:
-                end_seconds = max(entry['seconds'] for entry in batch)
-            
+                end_seconds = max(entry["seconds"] for entry in batch)
+
             start_time = seconds_to_time_str(start_seconds)
             end_time = seconds_to_time_str(end_seconds)
-            
+
             print(f"Processing batch {i}/{len(batches)}: {start_time} - {end_time}")
-            
+
             # Generate summary
             summary = summarize_batch(batch, i, api_key)
             batch_summaries.append(summary)
-        
+
         # Generate meeting summaries HTML with topic-level clickable links
         # Pass transcript_data for improved timestamp matching
-        generate_meeting_summaries_html(batches, batch_summaries, video_id, summary_file, transcript_data)
+        generate_meeting_summaries_html(
+            batches, batch_summaries, video_id, summary_file, transcript_data
+        )
         print(f"Generated meeting summaries HTML: {summary_file}")
-        
+
         # Generate meeting summaries Markdown with topic-level clickable links
         # Pass transcript_data for improved timestamp matching
-        generate_meeting_summaries_markdown(batches, batch_summaries, video_id, meeting_summary_md_file, transcript_data)
+        generate_meeting_summaries_markdown(
+            batches, batch_summaries, video_id, meeting_summary_md_file, transcript_data
+        )
         print(f"Generated meeting summaries Markdown: {meeting_summary_md_file}")
-        
+
         return html_file, summary_file, speaker_summary_file, meeting_summary_md_file
-    
+
     except Exception as e:
         print(f"Error processing Excel file: {e}", file=sys.stderr)
         raise
+
 
 def main():
     """
     Main function to handle command-line arguments and process Excel file
     """
     # Set up argument parser
-    parser = argparse.ArgumentParser(description='Convert Excel transcript to HTML links with summaries')
-    parser.add_argument('input_file', help='Input Excel file')
-    parser.add_argument('video_id', help='Panopto video ID (required)')
-    parser.add_argument('output_file', nargs='?', help='Output HTML file (optional)')
-    parser.add_argument('--summary-file', help='Output file for meeting summaries HTML (optional)')
-    parser.add_argument('--speaker-summary-file', help='Output file for speaker summaries markdown (optional)')
-    parser.add_argument('--meeting-summary-md-file', help='Output file for meeting summaries markdown (optional)')
-    parser.add_argument('--batch-size', type=int, default=DEFAULT_BATCH_SIZE_MINUTES,
-                     help=f'Batch size in minutes (default: {DEFAULT_BATCH_SIZE_MINUTES})')
-    parser.add_argument('--enhanced-summaries', action='store_true',
-                     help='Generate enhanced speaker summaries with multiple topics (requires speaker_summary_utils.py)')
-    
+    parser = argparse.ArgumentParser(
+        description="Convert Excel transcript to HTML links with summaries"
+    )
+    parser.add_argument("input_file", help="Input Excel file")
+    parser.add_argument("video_id", help="Panopto video ID (required)")
+    parser.add_argument("output_file", nargs="?", help="Output HTML file (optional)")
+    parser.add_argument(
+        "--summary-file", help="Output file for meeting summaries HTML (optional)"
+    )
+    parser.add_argument(
+        "--speaker-summary-file",
+        help="Output file for speaker summaries markdown (optional)",
+    )
+    parser.add_argument(
+        "--meeting-summary-md-file",
+        help="Output file for meeting summaries markdown (optional)",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=DEFAULT_BATCH_SIZE_MINUTES,
+        help=f"Batch size in minutes (default: {DEFAULT_BATCH_SIZE_MINUTES})",
+    )
+    parser.add_argument(
+        "--enhanced-summaries",
+        action="store_true",
+        help="Generate enhanced speaker summaries with multiple topics (requires speaker_summary_utils.py)",
+    )
+
     args = parser.parse_args()
-    
+
     # Check if enhanced summaries are requested but not available
     if args.enhanced_summaries and not ENHANCED_SUMMARIES_AVAILABLE:
-        print("Warning: Enhanced speaker summaries requested but speaker_summary_utils.py is not available.")
+        print(
+            "Warning: Enhanced speaker summaries requested but speaker_summary_utils.py is not available."
+        )
         print("Falling back to traditional speaker summaries.")
         args.enhanced_summaries = False
-    
+
     try:
-        html_file, summary_html_file, speaker_summary_file, meeting_summary_md_file = process_xlsx(
-            args.input_file,
-            args.video_id,
-            args.output_file,
-            args.speaker_summary_file,
-            args.meeting_summary_md_file,
-            args.batch_size,
-            args.enhanced_summaries
+        html_file, summary_html_file, speaker_summary_file, meeting_summary_md_file = (
+            process_xlsx(
+                args.input_file,
+                args.video_id,
+                args.output_file,
+                args.speaker_summary_file,
+                args.meeting_summary_md_file,
+                args.batch_size,
+                args.enhanced_summaries,
+            )
         )
-        
+
         if html_file and summary_html_file:
             print(f"Processing complete!")
             print(f"Speaker links HTML: {html_file}")
             print(f"Speaker summary Markdown: {speaker_summary_file}")
             print(f"Meeting summaries HTML: {summary_html_file}")
             print(f"Meeting summaries Markdown: {meeting_summary_md_file}")
-        
+
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
