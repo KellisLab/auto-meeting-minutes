@@ -6,6 +6,7 @@ from openpyxl.styles import Font, PatternFill
 import random
 import colorsys
 import sys
+import json
 
 def time_to_seconds(time_str):
     """Convert HH:MM:SS to seconds."""
@@ -67,6 +68,70 @@ def get_rainbow_color(position):
     r, g, b = [int(x * 255) for x in colorsys.hsv_to_rgb(h, s, v)]
     return f"{r:02x}{g:02x}{b:02x}"
 
+def detect_speaker_topics(data):
+    """
+    Detect potential topic changes for each speaker
+    
+    Args:
+        data (list): List of transcript entries
+        
+    Returns:
+        dict: Dictionary mapping speakers to their topics
+    """
+    # This simulates the functionality in speaker_summary_utils.enhance_speaker_tracking
+    # but limited to just detecting topic changes and adding metadata
+    
+    # Sort entries by timestamp
+    sorted_entries = sorted(data, key=lambda x: x['Seconds'])
+    
+    # Track speakers and their topics
+    speaker_topics = {}
+    current_topics = {}
+    
+    # First pass: detect topic boundaries
+    for i, entry in enumerate(sorted_entries):
+        speaker = entry['Name']
+        seconds = entry['Seconds']
+        
+        # Initialize speaker if first time seen
+        if speaker not in speaker_topics:
+            speaker_topics[speaker] = []
+            current_topics[speaker] = {
+                'start_idx': i,
+                'start_time': entry['Time'],
+                'start_seconds': seconds,
+                'text': [entry['Text']],
+                'indices': [i]
+            }
+        else:
+            # Check if this might be a new topic
+            last_seconds = sorted_entries[current_topics[speaker]['indices'][-1]]['Seconds']
+            time_gap = seconds - last_seconds
+            
+            if time_gap > 300:  # 5 minutes gap indicates new topic
+                # Finalize current topic
+                speaker_topics[speaker].append(current_topics[speaker])
+                
+                # Start new topic
+                current_topics[speaker] = {
+                    'start_idx': i,
+                    'start_time': entry['Time'],
+                    'start_seconds': seconds,
+                    'text': [entry['Text']],
+                    'indices': [i]
+                }
+            else:
+                # Continue current topic
+                current_topics[speaker]['text'].append(entry['Text'])
+                current_topics[speaker]['indices'].append(i)
+    
+    # Add final topics
+    for speaker, topic in current_topics.items():
+        if topic['text']:  # Ensure not empty
+            speaker_topics[speaker].append(topic)
+    
+    return speaker_topics
+
 def txt_to_xlsx(input_file, output_file):
     """
     Convert meeting transcript to Excel format.
@@ -125,13 +190,53 @@ def txt_to_xlsx(input_file, output_file):
     # Create DataFrame
     df = pd.DataFrame(data)
     
+    # Detect speaker topics
+    speaker_topics = detect_speaker_topics(data)
+    
+    # Add topic metadata to DataFrame
+    df['Topic_Number'] = None
+    df['Topic_Start_Time'] = None
+    df['Topic_Start_Seconds'] = None
+    df['All_Occurrences'] = None
+    
+    # Populate topic metadata
+    for speaker, topics in speaker_topics.items():
+        # Convert topics to a JSON string for storage
+        topic_json = json.dumps(topics)
+        
+        # For each topic
+        for topic_num, topic in enumerate(topics, 1):
+            # For each row index in this topic
+            for row_idx in topic['indices']:
+                # Update DataFrame with topic metadata
+                df.loc[row_idx, 'Topic_Number'] = topic_num
+                df.loc[row_idx, 'Topic_Start_Time'] = topic['start_time']
+                df.loc[row_idx, 'Topic_Start_Seconds'] = topic['start_seconds']
+    
+    # Store all occurrences for each speaker
+    for speaker in all_speakers:
+        # Get all indices and timestamps for this speaker
+        speaker_indices = df.index[df['Name'] == speaker].tolist()
+        speaker_times = df.loc[df['Name'] == speaker, ['Seconds', 'Time']].to_dict('records')
+        
+        # Create a JSON string of all occurrences
+        occurrences_json = json.dumps(speaker_times)
+        
+        # Update all rows for this speaker
+        df.loc[df['Name'] == speaker, 'All_Occurrences'] = occurrences_json
+    
     # Create Excel workbook
     wb = Workbook()
     ws = wb.active
     ws.title = "Meeting Transcript"
     
     # Add headers
-    headers = ['Seconds', 'Time', 'First', 'First_Time', 'First_Seconds', 'Name', 'Text']
+    headers = [
+        'Seconds', 'Time', 'First', 'First_Time', 'First_Seconds', 
+        'Name', 'Text', 'Topic_Number', 'Topic_Start_Time', 
+        'Topic_Start_Seconds', 'All_Occurrences'
+    ]
+    
     for col_num, header in enumerate(headers, 1):
         ws.cell(row=1, column=col_num).value = header
         ws.cell(row=1, column=col_num).font = Font(bold=True)
@@ -154,16 +259,22 @@ def txt_to_xlsx(input_file, output_file):
         
         for col_num, header in enumerate(headers, 1):
             cell = ws.cell(row=row_num, column=col_num)
-            cell.value = row_data.get(header, "")
+            
+            # Get the value, handling new fields
+            if header in row_data:
+                cell.value = row_data[header]
+            else:
+                # Get the value from DataFrame for the added columns
+                cell.value = df.iloc[row_num-2][header] if header in df.columns else None
             
             # Apply rainbow gradient to Seconds and First_Seconds columns
-            if header in ('Seconds', 'First_Seconds'):
+            if header in ('Seconds', 'First_Seconds', 'Topic_Start_Seconds'):
                 if cell.value is not None:  # Only color cells with values
                     cell.fill = PatternFill(start_color=time_color, end_color=time_color, fill_type="solid")
             
             # Apply color to speaker names (except Manolis Kellis)
-            elif header in ('Name', 'First') and row_data.get(header) and row_data.get(header) != "Manolis Kellis":
-                speaker = row_data.get(header)
+            elif header in ('Name', 'First') and cell.value and cell.value != "Manolis Kellis":
+                speaker = cell.value
                 if speaker in speaker_colors:
                     cell.fill = PatternFill(start_color=speaker_colors[speaker], 
                                            end_color=speaker_colors[speaker],
@@ -177,7 +288,11 @@ def txt_to_xlsx(input_file, output_file):
         for row_idx in range(2, len(data) + 2):
             cell_value = ws.cell(row=row_idx, column=col_idx).value
             if cell_value:
-                max_length = max(max_length, min(len(str(cell_value)), 100))  # Cap at 100 chars
+                # For JSON fields, limit the display length
+                if header in ['All_Occurrences']:
+                    max_length = max(max_length, 50)  # Cap JSON fields
+                else:
+                    max_length = max(max_length, min(len(str(cell_value)), 100))  # Cap at 100 chars
         
         # Adjust column width
         adjusted_width = max_length + 2

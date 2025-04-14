@@ -13,11 +13,11 @@ This script integrates all components of the transcript processing pipeline:
 8. html_bold_converter.py - Convert markdown-style bold formatting to HTML bold tags
 
 Usage:
-    python fullpipeline.py [url] [--skip-refinement] [--html-format {simple|numbered}] [--language LANGUAGE] [--meeting-root DIRECTORY]
-    [--skip-timestamps] [--skip-bold-conversion]
+    python fullpipeline.py [url] [--skip-refinement] [--language LANGUAGE] [--meeting-root DIRECTORY]
+    [--skip-timestamps] [--skip-bold-conversion] [--enhanced-summaries]
 
 Example:
-    python fullpipeline.py https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=ef5959d0-da5f-4ac0-a1ad-b2aa001320a0 --meeting-root /data/meetings
+    python fullpipeline.py https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=ef5959d0-da5f-4ac0-a1ad-b2aa001320a0 --meeting-root /data/meetings --enhanced-summaries
 """
 
 import os
@@ -52,7 +52,7 @@ def import_module_from_file(module_name, file_path):
 def sanitize_filename(name):
     """Sanitize meeting name to create a valid filename"""
     # Replace invalid filename characters with underscores
-    name = re.sub(r'[\\/*?:"<>|]', '_', name)
+    name = re.sub(r'[\\/*?"<>|]', '_', name)
     # Replace multiple spaces with a single underscore
     name = re.sub(r'\s+', '_', name)
     # Limit filename length
@@ -293,8 +293,9 @@ def set_timestamps_for_directory(directory, timestamp):
     
     return success_count, total_count
 
-def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", language="English_USA", 
-                         meeting_root=None, skip_timestamps=False, skip_bold_conversion=False):
+def run_pipeline_from_url(url, skip_refinement=False, language="English_USA", 
+                         meeting_root=None, skip_timestamps=False, skip_bold_conversion=False,
+                         use_enhanced_summaries=True):
     """Run the complete transcript processing pipeline starting from a URL"""
     
     # Use meeting_root from environment variable if not specified
@@ -439,15 +440,20 @@ def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", la
     try:
         xlsx2html = import_module_from_file("xlsx2html", xlsx2html_path)
         
+        # Check if enhanced summaries are available
+        # use_enhanced = use_enhanced_summaries and hasattr(xlsx2html, 'ENHANCED_SUMMARIES_AVAILABLE') and xlsx2html.ENHANCED_SUMMARIES_AVAILABLE
+        use_enhanced = True
+        if use_enhanced_summaries:
+            print("Using enhanced speaker summaries with multiple topics...")
+        
         # Process the refined Excel file
         result_files = xlsx2html.process_xlsx(
             refined_xlsx_file,
             video_id,
             html_file,
-            html_format,
-            summary_file,
             speaker_summary_file,
-            meeting_summary_md_file
+            meeting_summary_md_file,
+            use_enhanced_summaries=use_enhanced
         )
         
         # Unpack result files, using the original names as fallback
@@ -467,30 +473,48 @@ def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", la
         print(f"Error in XLSX to HTML conversion: {e}")
         sys.exit(1)
     
-    # Step 7: Optionally refine the summaries with improved timestamp matching (if not done in Step 5)
-    if not skip_refinement and os.path.exists(refinement_path) and os.path.exists(meeting_summary_md_file):
-        print("Step 7: Post-processing summaries to improve timestamp accuracy...")
+    # Step 7: Optionally convert markdown-style bold formatting to HTML bold tags
+    if not skip_bold_conversion:
         try:
-            # Import refineStartTimes module if not already imported
-            if 'refine_start_times' not in locals():
-                refine_start_times = import_module_from_file("refineStartTimes", refinement_path)
-            
-            # Create a version with refined timestamp mappings based on the summaries
-            refined_post = os.path.join(meeting_dir, f"{file_prefix}_refined_post.xlsx")
-            refined_post = refine_start_times.refine_from_summaries(
-                refined_xlsx_file, meeting_summary_md_file, refined_post
-            )
-            
-            print(f"Post-processed Excel file with improved timestamps: {refined_post}")
+            html_bold_converter_path = os.path.join(script_dir, "html_bold_converter.py")
+            if os.path.exists(html_bold_converter_path):
+                print("Step 7: Converting markdown-style bold formatting to HTML bold tags...")
+                
+                # Import and run the HTML bold converter module
+                html_bold_converter = import_module_from_file("html_bold_converter", html_bold_converter_path)
+                
+                # Process the HTML summary files
+                if os.path.exists(summary_file):
+                    html_bold_converter.process_html_file(summary_file)
+                    print(f"Converted bold formatting in meeting summaries HTML: {summary_file}")
+                
+                if os.path.exists(html_file):
+                    html_bold_converter.process_html_file(html_file)
+                    print(f"Converted bold formatting in speaker summaries HTML: {html_file}")
+                
+                # Process the markdown summary files
+                if os.path.exists(meeting_summary_md_file):
+                    html_bold_converter.process_md_file(meeting_summary_md_file)
+                    print(f"Converted bold formatting in meeting summaries Markdown: {meeting_summary_md_file}")
+                
+                if os.path.exists(speaker_summary_file):
+                    html_bold_converter.process_md_file(speaker_summary_file)
+                    print(f"Converted bold formatting in speaker summaries Markdown: {speaker_summary_file}")
+                
+            else:
+                print("Step 7: Converting bold formatting... (Skipped - converter script not found)")
         except Exception as e:
-            print(f"Warning: Error in summary post-processing: {e}")
+            print(f"Warning: Error in bold formatting conversion: {e}")
             print("Original summaries are still available.")
+    else:
+        print("Step 7: Converting bold formatting... (Skipped)")
     
     # Step 8: Set file and directory timestamps based on meeting date
     if not skip_timestamps:
         print("Step 8: Setting file and directory timestamps...")
         
         # Extract meeting date from folder name
+        meeting_folder_name = re.sub(r'[\\/*?:"<>|]', '_', meeting_folder_name)
         meeting_timestamp = extract_date_from_name(meeting_folder_name)
         
         if meeting_timestamp:
@@ -509,39 +533,6 @@ def run_pipeline_from_url(url, skip_refinement=False, html_format="numbered", la
             print("Warning: Could not extract date from meeting name, keeping original file timestamps")
     else:
         print("Step 8: Setting file and directory timestamps... (Skipped)")
-    
-    # Step 9: Convert markdown-style bold formatting to HTML bold tags
-    if not skip_bold_conversion:
-        print("Step 9: Converting markdown-style bold formatting to HTML bold tags...")
-        html_bold_converter_path = os.path.join(script_dir, "html_bold_converter.py")
-        
-        try:
-            # Import and run the HTML bold converter module
-            html_bold_converter = import_module_from_file("html_bold_converter", html_bold_converter_path)
-            
-            # Process the HTML summary files
-            if os.path.exists(summary_file):
-                html_bold_converter.process_html_file(summary_file)
-                print(f"Converted bold formatting in meeting summaries HTML: {summary_file}")
-            
-            if os.path.exists(html_file):
-                html_bold_converter.process_html_file(html_file)
-                print(f"Converted bold formatting in speaker summaries HTML: {html_file}")
-            
-            # Process the markdown summary files
-            if os.path.exists(meeting_summary_md_file):
-                html_bold_converter.process_md_file(meeting_summary_md_file)
-                print(f"Converted bold formatting in meeting summaries Markdown: {meeting_summary_md_file}")
-            
-            if os.path.exists(speaker_summary_file):
-                html_bold_converter.process_md_file(speaker_summary_file)
-                print(f"Converted bold formatting in speaker summaries Markdown: {speaker_summary_file}")
-            
-        except Exception as e:
-            print(f"Warning: Error in bold formatting conversion: {e}")
-            print("Original summaries are still available.")
-    else:
-        print("Step 9: Converting bold formatting... (Skipped)")
     
     return {
         "video_id": video_id,
@@ -565,18 +556,16 @@ def main():
     parser.add_argument('url', nargs='?', help='Panopto video URL')
     parser.add_argument('--skip-refinement', action='store_true', 
                       help='Skip the start time refinement step')
-    parser.add_argument('--html-format', choices=['simple', 'numbered'], default='numbered',
-                      help='Output format for HTML: simple or numbered (default: numbered)')
     parser.add_argument('--language', default='English_USA',
                       help='Language code for transcript (default: English_USA)')
     parser.add_argument('--meeting-root', 
                       help='Root directory to store meeting files (default: from MEETING_ROOT_DIR env var or "meetings")')
-    parser.add_argument('--use-modified-xlsx2html', action='store_true',
-                      help='Use the modified xlsx2html.py script with improved timestamp matching')
     parser.add_argument('--skip-timestamps', action='store_true',
                       help='Skip setting file timestamps to match meeting date')
     parser.add_argument('--skip-bold-conversion', action='store_true',
                       help='Skip converting markdown-style bold formatting to HTML bold tags')
+    parser.add_argument('--enhanced-summaries', action='store_true',
+                      help='Use enhanced speaker summaries with multiple topics (requires speaker_summary_utils.py)')
     
     args = parser.parse_args()
     
@@ -585,31 +574,14 @@ def main():
     if not url:
         url = input("Enter Panopto video URL: ")
     
-    # If using modified xlsx2html, replace the module path
-    if args.use_modified_xlsx2html:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        modified_path = os.path.join(script_dir, "xlsx2html_modified.py")
-        if os.path.exists(modified_path):
-            print("Using modified xlsx2html script with improved timestamp matching")
-            # Monkey patch the import_module_from_file function to use the modified path
-            original_import = import_module_from_file
-            def patched_import(module_name, file_path):
-                if module_name == "xlsx2html" and file_path.endswith("xlsx2html.py"):
-                    return original_import("xlsx2html_modified", modified_path)
-                return original_import(module_name, file_path)
-            # Replace the function
-            globals()["import_module_from_file"] = patched_import
-        else:
-            print("Warning: Modified xlsx2html script not found. Using original version.")
-    
     run_pipeline_from_url(
         url,
         args.skip_refinement,
-        args.html_format,
         args.language,
         args.meeting_root,
         args.skip_timestamps,
-        args.skip_bold_conversion
+        args.skip_bold_conversion,
+        args.enhanced_summaries
     )
 
 if __name__ == "__main__":
