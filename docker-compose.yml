@@ -1,16 +1,26 @@
 services:
   transcript-processor:
     build: .
+    container_name: transcript-processor
     ports:
       - "5001:5001"
     volumes:
-      - ./:/app
-      - processed_data:/app/temp_files
+      - ./:/app  # Mount the current directory to /app for development
+      - processed_data:/app/temp_files  # Persistent volume for processed data
     environment:
       - FLASK_APP=app.py
       - FLASK_ENV=production
-      # Uncomment and add your OpenAI API key
-      # - OPENAI_API_KEY=your_api_key_here
+      # OpenAI API configuration
+      - API_KEY=${API_KEY:-your_openai_api_key_here}  # Uses .env file or default
+      - GPT_MODEL=${GPT_MODEL:-gpt-4o}  # AI model to use for summarization
+      # Optional: Configure output directory
+      - MEETING_ROOT_DIR=/app/temp_files
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     command: python app.py
     restart: unless-stopped
 

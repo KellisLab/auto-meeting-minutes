@@ -1,18 +1,21 @@
 # Video Transcript Processing Pipeline
 
-A comprehensive pipeline for processing video transcripts from Panopto URLs to structured, searchable formats with AI-generated summaries. This toolset converts subtitles to text, Excel, and HTML formats with direct video timestamp links and intelligent content summaries.
+A comprehensive toolkit for processing video transcripts from Panopto URLs, converting subtitles to structured, searchable formats with AI-generated summaries. This platform transforms closed captions into rich, navigable documents with direct video timestamp links and intelligent content summaries.
 
 ## Overview
 
-This pipeline integrates several Python scripts to create a complete workflow:
+This pipeline integrates several specialized Python scripts to create a complete workflow:
 
 1. **url2id.py** - Extract Panopto video ID from a URL
-2. **url2file.py** - Download SRT transcript from Panopto using video ID
-3. **vtt2txt.py** - Convert subtitles (VTT/SRT) to plain text transcripts with timestamps
-4. **txt2xlsx.py** - Convert text to Excel with speaker highlighting and visual formatting
-5. **refineStartTimes.py** - Improve timestamp matching for speakers with multiple appearances
-6. **xlsx2html.py** - Convert Excel to HTML with direct timestamp links and AI-generated summaries
-7. **fullpipeline.py** - Run the entire process from URL to HTML summaries in one command
+2. **url2meeting_name.py** - Extract meeting name from Panopto URL for meaningful file naming
+3. **url2file.py** - Download SRT transcript from Panopto using video ID
+4. **vtt2txt.py** - Convert subtitles (VTT/SRT) to plain text transcripts with timestamps
+5. **txt2xlsx.py** - Convert text to Excel with speaker highlighting and visual formatting
+6. **refineStartTimes.py** - Improve timestamp matching for speakers with multiple appearances
+7. **xlsx2html.py** - Convert Excel to HTML with direct timestamp links and AI-generated summaries
+8. **fullpipeline.py** - Run the entire process from URL to HTML summaries in one command
+9. **pipeline.py** - Process local VTT/SRT files (alternative to URL-based processing)
+10. **html_bold_converter.py** - Convert markdown-style bold formatting to HTML bold tags
 
 ## Setup and Installation
 
@@ -20,178 +23,289 @@ This pipeline integrates several Python scripts to create a complete workflow:
 
 - Python 3.12 or higher
 - pip (Python package installer)
-- Docker
+- OpenAI API key (for AI-generated summaries)
 
-### Setting Up the Environment
+### Manual Installation
+
+#### Linux/macOS
+
+If you prefer a local installation on Linux or macOS:
 
 1. **Clone the repository**
 
 ```bash
 git clone https://github.com/KellisLab/auto-meeting-minutes.git
+cd auto-meeting-minutes
 ```
 
-2. **Add .env file**
-
-Create a `.env` file in the project directory:
-
-```
-API_KEY=your_openai_key_here
-GPT_MODEL="chatgpt-4o-latest"  # or another available model
-```
-
-3. **Docker**
-```bash
-docker-compose up --build
-```
-
-Access the web interface at http://localhost:5001
-
-## Pipeline Components
-
-### 1. URL to ID (url2id.py)
-
-Extracts the Panopto video ID from a URL.
+2. **Set up a Python virtual environment**
 
 ```bash
-python url2id.py [url]
+python -m venv venv
+source venv/bin/activate
 ```
 
-Example:
-```bash
-python url2id.py https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=ef5959d0-da5f-4ac0-a1ad-b2aa001320a0
-# Output: ef5959d0-da5f-4ac0-a1ad-b2aa001320a0
-```
-
-### 2. URL to File (url2file.py)
-
-Downloads a subtitle file in SRT format from a Panopto URL.
+3. **Install dependencies**
 
 ```bash
-python url2file.py [url] [output_file]
+pip install -r requirements.txt
 ```
 
-Example:
-```bash
-python url2file.py https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=ef5959d0-da5f-4ac0-a1ad-b2aa001320a0 lecture.srt
-```
-
-Supports language selection with `--language` option (default: "English_USA").
-
-### 3. VTT to TXT (vtt2txt.py)
-
-Converts WebVTT/SRT subtitle files to plain text transcripts with timestamps.
+4. **Download required NLTK data**
 
 ```bash
-python vtt2txt.py input.vtt [output.txt]
+python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords'); nltk.download('punkt_tab')"
 ```
 
-Output format:
-```
-00:00:10 Speaker Name: Text content
-00:00:15 Another Speaker: More text content
-```
-
-### 4. TXT to XLSX (txt2xlsx.py)
-
-Converts text transcripts to formatted Excel files with color-coding for speakers.
+5. **Create a .env file with your OpenAI API key**
 
 ```bash
-python txt2xlsx.py input.txt [output.xlsx]
+echo "API_KEY=your_openai_key_here" > .env
+echo "GPT_MODEL=gpt-4o" >> .env
+echo "MEETING_ROOT_DIR=/path/to/output/directory" >> .env
 ```
 
-Features:
-- Color-coded speakers (unique color per speaker)
-- Rainbow time gradient for timestamps
-- Special tracking of first speaker occurrences
-- Auto-adjusted column widths
+#### Windows
 
-### 5. Refine Start Times (refineStartTimes.py)
+For Windows users:
 
-Improves timestamp matching for speakers who appear multiple times, ensuring topics in summaries link to the correct instances.
+1. **Clone the repository**
 
-```bash
-python refineStartTimes.py input.xlsx [output.xlsx]
+```powershell
+git clone https://github.com/KellisLab/auto-meeting-minutes.git
+cd auto-meeting-minutes
 ```
 
-Features:
-- Analyzes text content for better topic-to-timestamp matching
-- Uses natural language processing to find the most relevant speaker instances
-- Updates Excel with improved timestamp mappings
-- Can post-process summaries to improve timestamp accuracy
-- Generates corrected markdown files with accurate timestamps
+2. **Set up a Python virtual environment**
 
-### 6. XLSX to HTML (xlsx2html.py)
-
-Converts Excel transcript files to HTML with video links and AI-generated summaries.
-
-```bash
-python xlsx2html.py input.xlsx VIDEO_ID [output.html] [--format={simple|numbered}]
+```powershell
+python -m venv venv
+venv\Scripts\activate
 ```
 
-Features:
-- Creates direct links to video timestamps for all speakers
-- Identifies segments between consecutive timestamps
-- Generates AI-powered summaries for each segment using OpenAI API
-- Creates batch summaries for longer segments of content
-- Outputs both HTML and Markdown formats
+3. **Install dependencies**
 
-Output files:
-- `*_speaker_summaries.html` - HTML with speaker links and summaries
-- `*_meeting_summaries.html` - HTML with batch summaries and topic links
-- `*_speaker_summaries.md` - Markdown version of speaker summaries
-- `*_meeting_summaries.md` - Markdown version of meeting summaries
+```powershell
+pip install -r requirements.txt
+```
 
-### 7. Full Pipeline (fullpipeline.py)
+4. **Download required NLTK data**
 
-Runs the entire process from URL to HTML summaries in one command.
+```powershell
+python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords'); nltk.download('punkt_tab')"
+```
+
+5. **Create a .env file with your OpenAI API key (using PowerShell)**
+
+```powershell
+# Create .env file with API key and model selection
+"API_KEY = ""your_openai_api_key_here""" | Out-File -FilePath .env
+"GPT_MODEL = ""gpt-4o""" | Add-Content -Path .env
+"MEETING_ROOT_DIR = C:\path\to\output\directory" | Add-Content -Path .env
+```
+
+6. **Run the application**
+
+```powershell
+# Run the web application
+python app.py
+
+# Or process a transcript directly
+python fullpipeline.py https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=YOUR_VIDEO_ID
+```
+
+## Web Interface Usage
+
+The web interface provides a simple way to process Panopto video transcripts:
+
+1. Paste a Panopto video URL in the input field
+2. Configure options:
+   - Skip timestamp refinement: Faster but less accurate topic mapping
+   - HTML Format: Choose between numbered or simple format
+   - Language: Select the transcript language
+3. Click "Process URL" and wait for processing to complete
+4. Download the generated files:
+   - Original subtitle file (.srt)
+   - Plain text transcript (.txt)
+   - Excel spreadsheet (.xlsx)
+   - Refined Excel with improved timestamps (.xlsx)
+   - Speaker links with summaries (.html)
+   - Meeting summaries (.html)
+   - Speaker and meeting summaries (.md)
+
+## Command Line Usage
+
+### 1. Full Pipeline (URL to Summaries)
+
+Process a Panopto video URL from start to finish:
 
 ```bash
-python fullpipeline.py [url] [--skip-refinement] [--html-format={simple|numbered}] [--language LANGUAGE]
+python fullpipeline.py https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=YOUR_VIDEO_ID [options]
 ```
 
 Options:
 - `--skip-refinement`: Skip the start time refinement step
-- `--html-format`: Choose between "simple" or "numbered" HTML output format
-- `--language`: Language code for transcript (default: "English_USA")
+- `--language LANGUAGE`: Language code (default: "English_USA")
+- `--meeting-root DIRECTORY`: Output directory for processed files
+- `--skip-timestamps`: Skip file timestamp adjustments
+- `--enhanced-summaries`: Use enhanced speaker summaries with multiple topics
 
-## Customization
+### 2. Local File Processing
+
+Process a local VTT or SRT file:
+
+```bash
+python pipeline.py input.srt VIDEO_ID [options]
+```
+
+Options:
+- `--skip-refinement`: Skip the start time refinement step
+- `--html-format {simple|numbered}`: Output format for HTML
+- `--output-dir DIRECTORY`: Directory to store output files
+- `--meeting-name NAME`: Custom name for output files
+
+### 3. Individual Component Usage
+
+Each script can also be used independently:
+
+#### Extract Video ID from URL
+```bash
+python url2id.py [url]
+```
+
+#### Download SRT Transcript
+```bash
+python url2file.py [url] [output_file] [--language LANGUAGE]
+```
+
+#### Convert SRT/VTT to Text
+```bash
+python vtt2txt.py input.vtt [output.txt]
+```
+
+#### Convert Text to Excel
+```bash
+python txt2xlsx.py input.txt [output.xlsx]
+```
+
+#### Refine Timestamps
+```bash
+python refineStartTimes.py input.xlsx [output.xlsx]
+```
+
+#### Convert Excel to HTML with Summaries
+```bash
+python xlsx2html.py input.xlsx VIDEO_ID [output.html] [--format={simple|numbered}]
+```
+
+## Output Files
+
+For a video with ID `meeting_name`, the pipeline produces:
+
+- `meeting_name.srt` - Original subtitle file
+- `meeting_name.txt` - Plain text transcript with timestamps
+- `meeting_name.xlsx` - Excel formatted transcript with speaker highlighting
+- `meeting_name_refined.xlsx` - Excel with improved timestamp matching
+- `meeting_name_speaker_summaries.html` - HTML with speaker links and summaries
+- `meeting_name_meeting_summaries.html` - HTML with batch summaries and topic links
+- `meeting_name_speaker_summaries.md` - Markdown speaker summaries
+- `meeting_name_meeting_summaries.md` - Markdown meeting summaries
+
+## Advanced Features
+
+### Enhanced Speaker Summaries
+
+The pipeline can generate detailed speaker-specific summaries with multiple topics per speaker:
+
+- Identifies distinct topics for each speaker using NLP
+- Creates separate summaries for each topic with timestamps
+- Links directly to the exact point in the video where each topic begins
+- Formats summaries in both HTML and Markdown formats
+
+Enable with `--enhanced-summaries` flag or enable in xlsx2html.py.
+
+### Timestamp Refinement
+
+The `refineStartTimes.py` script improves the accuracy of speaker timestamp links:
+
+- Analyzes text content for better topic-to-timestamp matching
+- Uses NLP to identify the most relevant speaker instances
+- Updates Excel with improved timestamp mappings
+- Generates corrected markdown files with accurate timestamps
+
+### Customization
 
 Various parameters can be adjusted:
 
-- In txt2xlsx.py: Color generation, column formatting
-- In refineStartTimes.py:
+- In **txt2xlsx.py**: Color generation, column formatting
+- In **refineStartTimes.py**:
   - Text similarity thresholds
   - Keyword extraction settings
   - Maximum time gap for matching
-- In xlsx2html.py: 
+- In **xlsx2html.py**: 
   - Batch size for summaries (`DEFAULT_BATCH_SIZE_MINUTES`)
   - AI model selection (via `.env` file)
   - Summary prompt templates
   - HTML and Markdown formatting
 
-## Output Files
+## Environment Variables
 
-For a video with ID `meeting`, the pipeline produces:
-- `meeting.srt` - Original subtitle file
-- `meeting.txt` - Plain text transcript
-- `meeting.xlsx` - Excel formatted transcript
-- `meeting_speaker_summaries.html` - HTML with speaker links
-- `meeting_meeting_summaries.html` - HTML with batch summaries
-- `meeting_speaker_summaries.md` - Markdown speaker summaries
-- `meeting_meeting_summaries.md` - Markdown meeting summaries
+Create a `.env` file in the project directory to configure:
 
-## Future Improvements
+```
+API_KEY=your_openai_key_here
+GPT_MODEL=gpt-4o
+MEETING_ROOT_DIR=/path/to/output/directory
+```
 
-- Enhance refineStartTimes.py with more advanced text matching algorithms
-- Add support for different video platforms beyond Panopto
-- Improve AI summarization with more advanced prompts
-- Add alternative summary methods that don't require OpenAI
-- Implement speech-to-text options for videos without existing subtitles
+## Troubleshooting
+
+### Common Issues
+
+- **Missing NLTK Data**: If you get NLTK errors, run the NLTK download commands manually.
+- **API Key Issues**: Check that your API_KEY is correctly set in .env or as an environment variable.
+- **Memory Errors**: For large transcripts, try increasing Docker container memory allocation.
+- **File Permission Issues**: Ensure the temp_files directory is writable.
+
+### Logs
+
+Check the application logs for detailed error information. In Docker:
+
+```bash
+docker logs transcript-processor
+```
+
+## Project Structure
+
+```
+.
+├── app.py                    # Flask web application
+├── docker-compose.yml        # Docker Compose configuration
+├── Dockerfile                # Docker build configuration
+├── fullpipeline.py           # Full URL-to-summaries pipeline
+├── pipeline.py               # Local file processing pipeline
+├── html_bold_converter.py    # Convert markdown bold to HTML
+├── refineStartTimes.py       # Timestamp refinement logic
+├── requirements.txt          # Python dependencies
+├── speaker_summary_utils.py  # Speaker summary generation utilities
+├── templates/                # Flask HTML templates
+│   └── index.html            # Web interface
+├── url2file.py               # URL to SRT downloader
+├── url2id.py                 # URL to video ID extractor
+├── url2meeting_name.py       # URL to meeting name extractor
+├── utils.py                  # Shared utility functions
+├── vtt2txt.py                # VTT/SRT to text converter
+└── xlsx2html.py              # Excel to HTML/MD converter
+```
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit pull requests or open issues for improvements.
 
 ## License
 
 This project is available under the MIT License.
 
-## Contributors
+## Acknowledgments
 
-This pipeline was developed to help process and analyze video content efficiently.
+This pipeline was developed to help process and analyze video content efficiently, with a focus on academic and research meetings.

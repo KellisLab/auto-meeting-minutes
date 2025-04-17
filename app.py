@@ -5,9 +5,22 @@ import threading
 import time
 import importlib.util
 import sys
+import logging
 from pathlib import Path
 import shutil
 from werkzeug.utils import secure_filename
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # For session management
@@ -24,6 +37,7 @@ processing_jobs = {}
 def import_module_from_file(module_name, file_path):
     """Import a module from a file path"""
     if not os.path.exists(file_path):
+        logger.error(f"Module not found: {file_path}")
         return None
         
     spec = importlib.util.spec_from_file_location(module_name, file_path)
@@ -42,8 +56,10 @@ try:
     refineStartTimes = import_module_from_file("refineStartTimes", os.path.join(script_dir, "refineStartTimes.py"))
     xlsx2html = import_module_from_file("xlsx2html", os.path.join(script_dir, "xlsx2html.py"))
     fullpipeline = import_module_from_file("fullpipeline", os.path.join(script_dir, "fullpipeline.py"))
+    # Try to import html_bold_converter if available
+    html_bold_converter = import_module_from_file("html_bold_converter", os.path.join(script_dir, "html_bold_converter.py"))
 except Exception as e:
-    print(f"Error importing pipeline modules: {e}")
+    logger.error(f"Error importing pipeline modules: {e}")
     sys.exit(1)
 
 class ProcessingStatus:
@@ -141,22 +157,57 @@ def process_url(job_id, url, options):
         
         status.update("html", "Generating HTML with summaries...", 60)
         # Generate HTML with summaries
-        html_format = options.get("html_format", "numbered")
         html_file = f"{file_prefix}_speaker_summaries.html"
         summary_file = f"{file_prefix}_meeting_summaries.html"
         speaker_summary_file = f"{file_prefix}_speaker_summaries.md"
         meeting_summary_md_file = f"{file_prefix}_meeting_summaries.md"
         
-        # Process the refined Excel file
-        html_file, summary_file, speaker_summary_file, meeting_summary_md_file = xlsx2html.process_xlsx(
-            refined_xlsx_file,
-            video_id,
-            html_file,
-            html_format,
-            summary_file,
-            speaker_summary_file,
-            meeting_summary_md_file
-        )
+        # Use enhanced summaries by default unless explicitly disabled
+        use_enhanced_summaries = not options.get("no_enhanced_summaries", False)
+        
+        # Important: This matches how fullpipeline.py calls process_xlsx
+        status.update("html", "Creating HTML with speaker summaries...", 65)
+        try:
+            # Looking at xlsx2html.py, it appears that html_format is not a parameter
+            # Let's only pass the parameters we know are supported
+            result_files = xlsx2html.process_xlsx(
+                refined_xlsx_file,
+                video_id,
+                html_file, 
+                speaker_summary_file,
+                meeting_summary_md_file,
+                use_enhanced_summaries=use_enhanced_summaries
+            )
+            
+            # Unpack result files if available
+            if result_files and len(result_files) == 4:
+                html_file, summary_file, speaker_summary_file, meeting_summary_md_file = result_files
+        except Exception as e:
+            logger.error(f"Error in xlsx2html processing: {e}")
+            status.update("html", f"Warning: Error in HTML generation: {str(e)}", 70)
+            status.update("proceeding", "Proceeding with available files...", 75)
+        
+        # Convert markdown-style bold formatting to HTML bold tags by default
+        if not options.get("skip_bold_conversion", False) and html_bold_converter:
+            status.update("formatting", "Converting markdown bold to HTML tags...", 80)
+            
+            # Process HTML files
+            if os.path.exists(html_file):
+                html_bold_converter.process_html_file(html_file)
+                status.update("formatting", "Converted bold formatting in speaker summaries HTML", 85)
+                
+            if os.path.exists(summary_file):
+                html_bold_converter.process_html_file(summary_file)
+                status.update("formatting", "Converted bold formatting in meeting summaries HTML", 90)
+                
+            # Process Markdown files
+            if os.path.exists(speaker_summary_file):
+                html_bold_converter.process_md_file(speaker_summary_file)
+                status.update("formatting", "Converted bold formatting in speaker summaries MD", 95)
+                
+            if os.path.exists(meeting_summary_md_file):
+                html_bold_converter.process_md_file(meeting_summary_md_file)
+                status.update("formatting", "Converted bold formatting in meeting summaries MD", 98)
         
         status.update("completed", "Processing completed successfully!", 100)
         
@@ -176,6 +227,7 @@ def process_url(job_id, url, options):
         
     except Exception as e:
         status.set_error(str(e))
+        logger.error(f"Error in process_url: {e}")
         # Return to original directory
         if 'original_dir' in locals():
             os.chdir(original_dir)
@@ -195,9 +247,14 @@ def process():
     # Get options
     options = {
         "skip_refinement": request.form.get('skip_refinement') == 'true',
-        "html_format": request.form.get('html_format', 'numbered'),
-        "language": request.form.get('language', 'English_USA')
+        "language": request.form.get('language', 'English_USA'),
+        # These are new options with defaults matching our updated pipeline
+        "no_enhanced_summaries": request.form.get('no_enhanced_summaries') == 'true',
+        "skip_bold_conversion": request.form.get('skip_bold_conversion') == 'true'
     }
+    
+    # Log received options
+    logger.info(f"Processing with options: {options}")
     
     # Generate a unique job ID
     job_id = str(uuid.uuid4())
@@ -266,12 +323,19 @@ def cleanup_old_jobs():
         for item in os.listdir(app.config['UPLOAD_FOLDER']):
             item_path = os.path.join(app.config['UPLOAD_FOLDER'], item)
             if os.path.isdir(item_path) and now - os.path.getmtime(item_path) > 86400:  # 24 hours
-                shutil.rmtree(item_path)
-                if item in processing_jobs:
-                    del processing_jobs[item]
+                try:
+                    shutil.rmtree(item_path)
+                    if item in processing_jobs:
+                        del processing_jobs[item]
+                except Exception as e:
+                    logger.error(f"Error cleaning up directory {item_path}: {e}")
 
-# if __name__ == '__main__':
-#     app.run(debug=True, threaded=True)
 if __name__ == '__main__':
+    # Log API model and key status
+    api_key = os.getenv("API_KEY")
+    model = os.getenv("GPT_MODEL", "Not set - will use default")
+    logger.info(f"Using API model: {model}")
+    logger.info(f"API Key configured: {'Yes' if api_key else 'No - summaries will be limited'}")
+    
     # In Docker, we want to listen on all interfaces
-    app.run(debug=False, threaded=True, host='0.0.0.0', port =5001)
+    app.run(debug=False, threaded=True, host='0.0.0.0', port=5001)

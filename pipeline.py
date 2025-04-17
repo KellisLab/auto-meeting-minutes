@@ -12,7 +12,7 @@ This script processes local subtitle files without requiring a Panopto URL:
 
 Usage:
     python pipeline.py input_file [video_id] [--skip-refinement] [--html-format {simple|numbered}] 
-                 [--output-dir DIRECTORY] [--meeting-name NAME]
+                 [--output-dir DIRECTORY] [--meeting-name NAME] [--no-enhanced-summaries] [--skip-bold-conversion]
 
 Example:
     python pipeline.py lecture.srt ef5959d0-da5f-4ac0-a1ad-b2aa001320a0 --meeting-name "CS101 Lecture"
@@ -26,19 +26,31 @@ import tempfile
 import re
 from pathlib import Path
 from dotenv import load_dotenv
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file if present
 # This will load variables like MEETING_ROOT_DIR (default output directory) 
 # and API_KEY (OpenAI API key for summaries)
 load_dotenv()
-print("Loading environment variables from .env file, if present...")
-print(f"MEETING_ROOT_DIR from .env: {os.getenv('MEETING_ROOT_DIR', 'Not set')}")
+logger.info("Loading environment variables from .env file, if present...")
+logger.info(f"MEETING_ROOT_DIR from .env: {os.getenv('MEETING_ROOT_DIR', 'Not set')}")
+logger.info(f"Using API model: {os.getenv('GPT_MODEL', 'Not set - will use default')}")
 
 # Import our modules directly
 def import_module_from_file(module_name, file_path):
     """Import a module from a file path"""
     if not os.path.exists(file_path):
-        print(f"Error: Module file not found: {file_path}")
+        logger.error(f"Error: Module file not found: {file_path}")
         sys.exit(1)
         
     spec = importlib.util.spec_from_file_location(module_name, file_path)
@@ -57,13 +69,44 @@ def sanitize_filename(name):
         name = name[:100]
     return name
 
+def get_unique_directory_name(base_dir, folder_name):
+    """
+    Generate a unique directory name by appending a suffix if necessary.
+    
+    Args:
+        base_dir (str): Base directory
+        folder_name (str): Desired folder name
+        
+    Returns:
+        str: Unique folder name
+    """
+    # Initial path
+    dir_path = os.path.join(base_dir, folder_name)
+    
+    # Check if directory exists and has content
+    if os.path.exists(dir_path) and os.listdir(dir_path):
+        # Directory exists and has content, append suffix
+        counter = 2
+        while True:
+            new_name = f"{folder_name} ({counter})"  # Added space before parenthesis
+            new_path = os.path.join(base_dir, new_name)
+            
+            # Check if this new name is available or is empty
+            if not os.path.exists(new_path) or not os.listdir(new_path):
+                return new_name
+            
+            counter += 1
+    
+    # Directory doesn't exist or is empty
+    return folder_name
+
 def run_pipeline(input_file, video_id=None, skip_refinement=False, html_format="numbered", 
-                output_dir=None, meeting_name=None):
+                output_dir=None, meeting_name=None, enhanced_summaries=True, skip_bold_conversion=False):
     """Run the transcript processing pipeline starting from a local VTT/SRT file"""
     
     # Ensure input file exists
     if not os.path.exists(input_file):
-        print(f"Error: Input file not found: {input_file}")
+        logger.error(f"Error: Input file not found: {input_file}")
         sys.exit(1)
     
     # Create output directory if specified, use environment variable, or use default
@@ -72,13 +115,13 @@ def run_pipeline(input_file, video_id=None, skip_refinement=False, html_format="
         env_output_dir = os.getenv('MEETING_ROOT_DIR')
         if env_output_dir:
             output_dir = env_output_dir
-            print(f"Using MEETING_ROOT_DIR from .env: {output_dir}")
+            logger.info(f"Using MEETING_ROOT_DIR from .env: {output_dir}")
         else:
             # Fallback to input file directory
             output_dir = os.path.dirname(input_file) or '.'
-            print(f"Using default output directory: {os.path.abspath(output_dir)}")
+            logger.info(f"Using default output directory: {os.path.abspath(output_dir)}")
     else:
-        print(f"Using specified output directory: {output_dir}")
+        logger.info(f"Using specified output directory: {output_dir}")
     
     # Ensure output_dir is an absolute path or make it absolute
     if not os.path.isabs(output_dir):
@@ -86,21 +129,29 @@ def run_pipeline(input_file, video_id=None, skip_refinement=False, html_format="
     
     # Make sure to create the directory if it doesn't exist
     if not os.path.exists(output_dir):
-        print(f"Creating output directory: {output_dir}")
+        logger.info(f"Creating output directory: {output_dir}")
         try:
             os.makedirs(output_dir, exist_ok=True)
         except Exception as e:
-            print(f"Error creating output directory: {e}")
+            logger.error(f"Error creating output directory: {e}")
             sys.exit(1)
     
     # Determine file prefix for output files
     if meeting_name:
         file_prefix = sanitize_filename(meeting_name)
+        meeting_folder_name = file_prefix
     else:
         # Use input filename as default prefix
         file_prefix = os.path.splitext(os.path.basename(input_file))[0]
+        meeting_folder_name = file_prefix
     
-    print(f"Using file prefix: {file_prefix}")
+    # Create meeting-specific directory within the output directory
+    meeting_folder_name = get_unique_directory_name(output_dir, meeting_folder_name)
+    meeting_dir = os.path.join(output_dir, meeting_folder_name)
+    logger.info(f"Creating meeting directory: {meeting_dir}")
+    os.makedirs(meeting_dir, exist_ok=True)
+    
+    logger.info(f"Using file prefix: {file_prefix}")
     
     # Prompt for video_id if not provided
     if video_id is None:
@@ -110,7 +161,7 @@ def run_pipeline(input_file, video_id=None, skip_refinement=False, html_format="
         
         # Validate video ID format
         if not re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', video_id):
-            print("Warning: The provided video ID doesn't match the expected format.")
+            logger.warning("Warning: The provided video ID doesn't match the expected format.")
             if input("Continue anyway? (y/n): ").lower() != 'y':
                 sys.exit(1)
     
@@ -121,35 +172,35 @@ def run_pipeline(input_file, video_id=None, skip_refinement=False, html_format="
     original_dir = os.getcwd()
     
     # Step 1: Convert VTT/SRT to TXT
-    print("Step 1: Converting subtitle file to TXT...")
+    logger.info("Step 1: Converting subtitle file to TXT...")
     vtt2txt_path = os.path.join(script_dir, "vtt2txt.py")
-    txt_file = os.path.join(output_dir, f"{file_prefix}.txt")
+    txt_file = os.path.join(meeting_dir, f"{file_prefix}.txt")
     
     try:
         vtt2txt = import_module_from_file("vtt2txt", vtt2txt_path)
         txt_file = vtt2txt.vtt_to_txt(input_file, txt_file)
-        print(f"Subtitle file converted to TXT: {txt_file}")
+        logger.info(f"Subtitle file converted to TXT: {txt_file}")
     except Exception as e:
-        print(f"Error converting to TXT: {e}")
+        logger.error(f"Error converting to TXT: {e}")
         sys.exit(1)
     
     # Step 2: Convert TXT to XLSX
-    print("Step 2: Converting TXT to XLSX...")
+    logger.info("Step 2: Converting TXT to XLSX...")
     txt2xlsx_path = os.path.join(script_dir, "txt2xlsx.py")
-    xlsx_file = os.path.join(output_dir, f"{file_prefix}.xlsx")
+    xlsx_file = os.path.join(meeting_dir, f"{file_prefix}.xlsx")
     
     try:
         txt2xlsx = import_module_from_file("txt2xlsx", txt2xlsx_path)
         xlsx_file = txt2xlsx.txt_to_xlsx(txt_file, xlsx_file)
-        print(f"TXT converted to XLSX: {xlsx_file}")
+        logger.info(f"TXT converted to XLSX: {xlsx_file}")
     except Exception as e:
-        print(f"Error in TXT to XLSX conversion: {e}")
+        logger.error(f"Error in TXT to XLSX conversion: {e}")
         sys.exit(1)
     
     # Step 3: Run refineStartTimes if not skipped
     refined_xlsx_file = xlsx_file
     if not skip_refinement:
-        print("Step 3: Refining start times...")
+        logger.info("Step 3: Refining start times...")
         refinement_path = os.path.join(script_dir, "refineStartTimes.py")
         
         if os.path.exists(refinement_path):
@@ -158,94 +209,102 @@ def run_pipeline(input_file, video_id=None, skip_refinement=False, html_format="
                 refine_start_times = import_module_from_file("refineStartTimes", refinement_path)
                 
                 # Create a refined version of the Excel file
-                refined_xlsx_file = os.path.join(output_dir, f"{file_prefix}_refined.xlsx")
+                refined_xlsx_file = os.path.join(meeting_dir, f"{file_prefix}_refined.xlsx")
                 refined_xlsx_file = refine_start_times.refine_start_times(xlsx_file, refined_xlsx_file)
                 
-                print(f"Start times refined and saved to: {refined_xlsx_file}")
+                logger.info(f"Start times refined and saved to: {refined_xlsx_file}")
             except Exception as e:
-                print(f"Error in start time refinement: {e}")
-                print("Continuing with pipeline using original Excel file...")
+                logger.error(f"Error in start time refinement: {e}")
+                logger.warning("Continuing with pipeline using original Excel file...")
                 refined_xlsx_file = xlsx_file
         else:
-            print("Note: refineStartTimes.py not found. Skipping refinement step.")
+            logger.warning("Note: refineStartTimes.py not found. Skipping refinement step.")
     else:
-        print("Step 3: Refining start times... (Skipped)")
+        logger.info("Step 3: Refining start times... (Skipped)")
     
     # Step 4: Convert XLSX to HTML with summaries
-    print("Step 4: Generating HTML with summaries...")
+    logger.info("Step 4: Generating HTML with summaries...")
     xlsx2html_path = os.path.join(script_dir, "xlsx2html.py")
-    html_file = os.path.join(output_dir, f"{file_prefix}_speaker_summaries.html")
-    summary_file = os.path.join(output_dir, f"{file_prefix}_meeting_summaries.html")
-    speaker_summary_file = os.path.join(output_dir, f"{file_prefix}_speaker_summaries.md")
-    meeting_summary_md_file = os.path.join(output_dir, f"{file_prefix}_meeting_summaries.md")
+    html_file = os.path.join(meeting_dir, f"{file_prefix}_speaker_summaries.html")
+    summary_file = os.path.join(meeting_dir, f"{file_prefix}_meeting_summaries.html")
+    speaker_summary_file = os.path.join(meeting_dir, f"{file_prefix}_speaker_summaries.md")
+    meeting_summary_md_file = os.path.join(meeting_dir, f"{file_prefix}_meeting_summaries.md")
     
     try:
         xlsx2html = import_module_from_file("xlsx2html", xlsx2html_path)
         
-        # Process the refined Excel file
-        result_files = xlsx2html.process_xlsx(
-            refined_xlsx_file,
-            video_id,
-            html_file,
-            html_format,
-            summary_file,
-            speaker_summary_file,
-            meeting_summary_md_file
-        )
-        
-        # Unpack result files, using the original names as fallback
-        if result_files and len(result_files) == 4:
-            html_file, summary_file, speaker_summary_file, meeting_summary_md_file = result_files
-        
-        if os.path.exists(html_file) and os.path.exists(summary_file):
-            print("\nHTML generation completed successfully!")
-            print(f"Files saved to: {output_dir}")
-            print(f"Speaker links HTML: {html_file}")
-            print(f"Speaker summary Markdown: {speaker_summary_file}")
-            print(f"Meeting summaries HTML: {summary_file}")
-            print(f"Meeting summaries Markdown: {meeting_summary_md_file}")
-        else:
-            print("Warning: HTML conversion completed but output files may be missing.")
+        # Process the refined Excel file with corrected parameter order
+        # Fix: Removed html_format and summary_file parameters that were causing conflicts
+        try:
+            logger.info("Creating HTML with speaker summaries...")
+            result_files = xlsx2html.process_xlsx(
+                refined_xlsx_file,
+                video_id,
+                html_file,
+                speaker_summary_file,
+                meeting_summary_md_file,
+                use_enhanced_summaries=enhanced_summaries
+            )
+            
+            # Unpack result files, using the original names as fallback
+            if result_files and len(result_files) == 4:
+                html_file, summary_file, speaker_summary_file, meeting_summary_md_file = result_files
+                
+            logger.info("\nHTML generation completed successfully!")
+            logger.info(f"Files saved to: {meeting_dir}")
+            logger.info(f"Speaker links HTML: {html_file}")
+            logger.info(f"Speaker summary Markdown: {speaker_summary_file}")
+            logger.info(f"Meeting summaries HTML: {summary_file}")
+            logger.info(f"Meeting summaries Markdown: {meeting_summary_md_file}")
+        except Exception as e:
+            logger.error(f"Error in xlsx2html processing: {e}")
+            logger.warning(f"Warning: Error in HTML generation: {str(e)}")
+            logger.info("Proceeding with available files...")
+            
     except Exception as e:
-        print(f"Error in XLSX to HTML conversion: {e}")
+        logger.error(f"Error in XLSX to HTML conversion: {e}")
         sys.exit(1)
     
-    # Step 5: Optionally convert markdown-style bold formatting to HTML bold tags
-    try:
-        html_bold_converter_path = os.path.join(script_dir, "html_bold_converter.py")
-        if os.path.exists(html_bold_converter_path):
-            print("Step 5: Converting markdown-style bold formatting to HTML bold tags...")
-            
-            # Import and run the HTML bold converter module
-            html_bold_converter = import_module_from_file("html_bold_converter", html_bold_converter_path)
-            
-            # Process the HTML summary files
-            if os.path.exists(summary_file):
-                html_bold_converter.process_html_file(summary_file)
-                print(f"Converted bold formatting in meeting summaries HTML: {summary_file}")
-            
-            if os.path.exists(html_file):
-                html_bold_converter.process_html_file(html_file)
-                print(f"Converted bold formatting in speaker summaries HTML: {html_file}")
-            
-            # Process the markdown summary files
-            if os.path.exists(meeting_summary_md_file):
-                html_bold_converter.process_md_file(meeting_summary_md_file)
-                print(f"Converted bold formatting in meeting summaries Markdown: {meeting_summary_md_file}")
-            
-            if os.path.exists(speaker_summary_file):
-                html_bold_converter.process_md_file(speaker_summary_file)
-                print(f"Converted bold formatting in speaker summaries Markdown: {speaker_summary_file}")
-        else:
-            print("Step 5: Converting bold formatting... (Skipped - converter script not found)")
-    except Exception as e:
-        print(f"Warning: Error in bold formatting conversion: {e}")
-        print("Original summaries are still available.")
+    # Step 5: Convert markdown-style bold formatting to HTML bold tags (unless skipped)
+    if not skip_bold_conversion:
+        try:
+            html_bold_converter_path = os.path.join(script_dir, "html_bold_converter.py")
+            if os.path.exists(html_bold_converter_path):
+                logger.info("Step 5: Converting markdown-style bold formatting to HTML bold tags...")
+                
+                # Import and run the HTML bold converter module
+                html_bold_converter = import_module_from_file("html_bold_converter", html_bold_converter_path)
+                
+                # Process the HTML summary files
+                if os.path.exists(summary_file):
+                    html_bold_converter.process_html_file(summary_file)
+                    logger.info(f"Converted bold formatting in meeting summaries HTML: {summary_file}")
+                
+                if os.path.exists(html_file):
+                    html_bold_converter.process_html_file(html_file)
+                    logger.info(f"Converted bold formatting in speaker summaries HTML: {html_file}")
+                
+                # Process the markdown summary files
+                if os.path.exists(meeting_summary_md_file):
+                    html_bold_converter.process_md_file(meeting_summary_md_file)
+                    logger.info(f"Converted bold formatting in meeting summaries Markdown: {meeting_summary_md_file}")
+                
+                if os.path.exists(speaker_summary_file):
+                    html_bold_converter.process_md_file(speaker_summary_file)
+                    logger.info(f"Converted bold formatting in speaker summaries Markdown: {speaker_summary_file}")
+            else:
+                logger.info("Step 5: Converting bold formatting... (Skipped - converter script not found)")
+        except Exception as e:
+            logger.warning(f"Warning: Error in bold formatting conversion: {e}")
+            logger.info("Original summaries are still available.")
+    else:
+        logger.info("Step 5: Converting bold formatting... (Skipped by user request)")
     
     return {
         "video_id": video_id,
         "file_prefix": file_prefix,
         "output_dir": output_dir,
+        "meeting_dir": meeting_dir,
         "input_file": input_file,
         "txt_file": txt_file,
         "xlsx_file": xlsx_file,
@@ -270,6 +329,10 @@ def main():
                       help='Directory to store output files (default: MEETING_ROOT_DIR from .env or input file directory)')
     parser.add_argument('--meeting-name', 
                       help='Meeting name to use for output file prefixes (default: input filename)')
+    parser.add_argument('--no-enhanced-summaries', action='store_true',
+                      help='Disable enhanced speaker summaries with multiple topics (enabled by default)')
+    parser.add_argument('--skip-bold-conversion', action='store_true',
+                      help='Skip converting markdown-style bold formatting to HTML bold tags')
     
     args = parser.parse_args()
     
@@ -281,7 +344,9 @@ def main():
         args.skip_refinement,
         args.html_format,
         args.output_dir,
-        args.meeting_name
+        args.meeting_name,
+        not args.no_enhanced_summaries,  # Inverted flag since enhanced summaries is now default
+        args.skip_bold_conversion
     )
 
 if __name__ == "__main__":
