@@ -16,6 +16,7 @@ env/
 *.md
 *.srt
 !requirements.txt
+!requirements_mac.txt
 !index.html
 *.python-version
 

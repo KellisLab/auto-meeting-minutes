@@ -60,6 +60,70 @@ def sanitize_filename(name):
         name = name[:100]
     return name
 
+def get_unique_directory_name(base_dir, folder_name):
+    """
+    Generate a unique directory name by appending a suffix if necessary.
+    
+    Args:
+        base_dir (str): Base directory
+        folder_name (str): Desired folder name
+        
+    Returns:
+        str: Unique folder name
+    """
+    # Initial path
+    dir_path = os.path.join(base_dir, folder_name)
+    
+    # Check if directory exists and has content
+    if os.path.exists(dir_path) and os.listdir(dir_path):
+        # Directory exists and has content, append suffix
+        counter = 2
+        while True:
+            new_name = f"{folder_name} ({counter})"  # Added space before parenthesis
+            new_path = os.path.join(base_dir, new_name)
+            
+            # Check if this new name is available or is empty
+            if not os.path.exists(new_path) or not os.listdir(new_path):
+                return new_name
+            
+            counter += 1
+    
+    # Directory doesn't exist or is empty
+    return folder_name
+
+def fix_compound_words(text):
+    """
+    Fix compound words with hyphens that might have been expanded with spaces.
+    
+    Args:
+        text (str): Text to fix
+        
+    Returns:
+        str: Fixed text
+    """
+    # Pattern to match "word - word" (a word, followed by space-hyphen-space, followed by another word)
+    pattern = r'\b([a-zA-Z]+)\s+-\s+([a-zA-Z]+)\b'
+    
+    def replace_match(match):
+        word1 = match.group(1).lower()
+        word2 = match.group(2).lower()
+        
+        # Common prefixes and short words that are likely parts of compound words
+        common_prefixes = {'self', 'post', 'pre', 'non', 'anti', 'co', 'counter', 'cross', 
+                         'cyber', 'meta', 'multi', 'over', 'pseudo', 'quasi', 'semi', 
+                         'sub', 'super', 'trans', 'ultra', 'under', 'vice', 'inter', 
+                         'intra', 'micro', 'mid', 'mini', 'pro', 're', 'buy'}
+        
+        # Keep original capitalization while joining with hyphen
+        if (len(word1) <= 4 or word1 in common_prefixes):
+            return match.group(1) + '-' + match.group(2)
+        
+        # Not a compound word, keep as is
+        return match.group(0)
+    
+    # Apply the replacement
+    return re.sub(pattern, replace_match, text)
+
 def extract_date_from_name(name):
     """
     Extract date and time information from the meeting name.
@@ -354,12 +418,12 @@ def run_pipeline_from_url(url, skip_refinement=False, language="English_USA",
         file_prefix = video_id
         meeting_folder_name = video_id
     
-    # Create meeting-specific directory in the meeting root
+    # Create meeting-specific directory in the meeting root with unique name to prevent overwriting
+    meeting_folder_name = get_unique_directory_name(meeting_root, meeting_folder_name)
     meeting_dir = os.path.join(meeting_root, meeting_folder_name)
     meeting_dir_abs = os.path.abspath(meeting_dir)
-    if not os.path.exists(meeting_dir):
-        print(f"Creating meeting directory: {meeting_dir}")
-        os.makedirs(meeting_dir, exist_ok=True)
+    print(f"Creating meeting directory: {meeting_dir}")
+    os.makedirs(meeting_dir, exist_ok=True)
     
     # Step 2: Download transcript from Panopto
     print("Step 2: Downloading transcript...")
@@ -459,6 +523,42 @@ def run_pipeline_from_url(url, skip_refinement=False, language="English_USA",
         # Unpack result files, using the original names as fallback
         if result_files and len(result_files) == 4:
             html_file, summary_file, speaker_summary_file, meeting_summary_md_file = result_files
+        
+        # Apply compound word fix to all summary files
+        try:
+            # Fix HTML files
+            if os.path.exists(html_file):
+                with open(html_file, 'r', encoding='utf-8') as f:
+                    html_content = f.read()
+                html_content = fix_compound_words(html_content)
+                with open(html_file, 'w', encoding='utf-8') as f:
+                    f.write(html_content)
+            
+            if os.path.exists(summary_file):
+                with open(summary_file, 'r', encoding='utf-8') as f:
+                    summary_content = f.read()
+                summary_content = fix_compound_words(summary_content)
+                with open(summary_file, 'w', encoding='utf-8') as f:
+                    f.write(summary_content)
+            
+            # Fix markdown files
+            if os.path.exists(speaker_summary_file):
+                with open(speaker_summary_file, 'r', encoding='utf-8') as f:
+                    md_content = f.read()
+                md_content = fix_compound_words(md_content)
+                with open(speaker_summary_file, 'w', encoding='utf-8') as f:
+                    f.write(md_content)
+            
+            if os.path.exists(meeting_summary_md_file):
+                with open(meeting_summary_md_file, 'r', encoding='utf-8') as f:
+                    md_content = f.read()
+                md_content = fix_compound_words(md_content)
+                with open(meeting_summary_md_file, 'w', encoding='utf-8') as f:
+                    f.write(md_content)
+                    
+            print("Applied compound word fixes to all summary files")
+        except Exception as e:
+            print(f"Warning: Error applying compound word fixes: {e}")
         
         if os.path.exists(html_file) and os.path.exists(summary_file):
             print("\nHTML generation completed successfully!")
