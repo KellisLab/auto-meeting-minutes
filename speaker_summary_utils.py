@@ -258,7 +258,8 @@ def generate_enhanced_speaker_summary_html(transcript_data, video_id, html_file=
     
     # Try to extract a title from the file path
     try:
-        folder_name = os.path.basename(os.path.dirname(html_file))
+        title = re.sub(r'(?<=\d)\.(\d{2})(am|pm)', r':\1\2', html_file)
+        folder_name = os.path.basename(os.path.dirname(title))
         formatted_name = folder_name.replace('_', ' ')
         video_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}'
         html_content += f'<h1><a href="{video_link}">{formatted_name} <span style="color: #1155cc;">(link)</span></a></h1>\n'
@@ -330,7 +331,17 @@ def generate_enhanced_speaker_summary_markdown(transcript_data, video_id, md_fil
     # Get summaries data if not provided
     if summaries_data is None:
         summaries_data = generate_speaker_summaries_data(transcript_data, api_key)
-    
+
+    try:
+        title = re.sub(r'(?<=\d)\.(\d{2})(am|pm)', r':\1\2', md_file)
+        folder_name = os.path.basename(os.path.dirname(title))
+        formatted_name = folder_name.replace("_", " ")
+        video_link = (
+            f"https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}"
+        )
+        md_lines.append(f"# [{formatted_name}]({video_link})\n")
+    except:
+        md_lines.append("# Meeting Summary\n")
     # Process each speaker
     for speaker, topics in summaries_data.items():
         # Speaker name as header

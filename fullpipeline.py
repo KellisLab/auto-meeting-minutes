@@ -51,6 +51,8 @@ def import_module_from_file(module_name, file_path):
 
 def sanitize_filename(name):
     """Sanitize meeting name to create a valid filename"""
+    # Replace colons with dots (e.g., "4:00pm" → "4.00pm")
+    name = re.sub(r':', '.', name)
     # Replace invalid filename characters with underscores
     name = re.sub(r'[\\/*?"<>|]', '_', name)
     # Replace multiple spaces with a single underscore
@@ -101,28 +103,29 @@ def fix_compound_words(text):
     Returns:
         str: Fixed text
     """
-    # Pattern to match "word - word" (a word, followed by space-hyphen-space, followed by another word)
-    pattern = r'\b([a-zA-Z]+)\s+-\s+([a-zA-Z]+)\b'
+    return text
+    # # Pattern to match "word - word" (a word, followed by space-hyphen-space, followed by another word)
+    # pattern = r'\b([a-zA-Z]+)\s+-\s+([a-zA-Z]+)\b'
     
-    def replace_match(match):
-        word1 = match.group(1).lower()
-        word2 = match.group(2).lower()
+    # def replace_match(match):
+    #     word1 = match.group(1).lower()
+    #     word2 = match.group(2).lower()
         
-        # Common prefixes and short words that are likely parts of compound words
-        common_prefixes = {'self', 'post', 'pre', 'non', 'anti', 'co', 'counter', 'cross', 
-                         'cyber', 'meta', 'multi', 'over', 'pseudo', 'quasi', 'semi', 
-                         'sub', 'super', 'trans', 'ultra', 'under', 'vice', 'inter', 
-                         'intra', 'micro', 'mid', 'mini', 'pro', 're', 'buy'}
+    #     # Common prefixes and short words that are likely parts of compound words
+    #     common_prefixes = {'self', 'post', 'pre', 'non', 'anti', 'co', 'counter', 'cross', 
+    #                      'cyber', 'meta', 'multi', 'over', 'pseudo', 'quasi', 'semi', 
+    #                      'sub', 'super', 'trans', 'ultra', 'under', 'vice', 'inter', 
+    #                      'intra', 'micro', 'mid', 'mini', 'pro', 're', 'buy'}
         
-        # Keep original capitalization while joining with hyphen
-        if (len(word1) <= 4 or word1 in common_prefixes):
-            return match.group(1) + '-' + match.group(2)
+    #     # Keep original capitalization while joining with hyphen
+    #     if (len(word1) <= 4 or word1 in common_prefixes):
+    #         return match.group(1) + '-' + match.group(2)
         
-        # Not a compound word, keep as is
-        return match.group(0)
+    #     # Not a compound word, keep as is
+    #     return match.group(0)
     
-    # Apply the replacement
-    return re.sub(pattern, replace_match, text)
+    # # Apply the replacement
+    # return re.sub(pattern, replace_match, text)
 
 def extract_date_from_name(name):
     """
@@ -137,7 +140,7 @@ def extract_date_from_name(name):
     try:
         # Pattern 1: YYYY.MM.DD_[Weekday][Hour]_[Minute][am/pm]
         # Example: 2025.03.27_Thu5_20pm
-        pattern1 = r'(\d{4})\.(\d{2})\.(\d{2})_[A-Za-z]{3}(\d{1,2})_(\d{2})(am|pm)'
+        pattern1 = r'(\d{4})\.(\d{2})\.(\d{2})_[A-Za-z]{3}(\d{1,2}).(\d{2})(am|pm)'
         
         # Pattern 2: YYYY.MM.DD_[Weekday][Hour][am/pm]
         # Example: 2024.10.15_Tue3pm

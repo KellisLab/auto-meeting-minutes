@@ -94,7 +94,8 @@ def generate_meeting_summaries_html(
     list_items_html = []
 
     try:
-        folder_name = os.path.basename(os.path.dirname(html_file))
+        title = re.sub(r'(?<=\d)\.(\d{2})(am|pm)', r':\1\2', html_file)
+        folder_name = os.path.basename(os.path.dirname(title))
         formatted_name = folder_name.replace("_", " ")
         video_link = (
             f"https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}"
@@ -156,9 +157,10 @@ def generate_meeting_summaries_html(
             )
         else:
             # Fallback: Find the entry for this speaker in the batch
+            names = re.split(r'\s*&\s*|,\s*| and ', speaker)
             speaker_entry = None
             for entry in batch:
-                if entry["name"] == speaker:
+                if entry["name"] in names:
                     speaker_entry = entry
                     break
 
@@ -241,12 +243,13 @@ def generate_meeting_summaries_markdown(
     """
     md_lines = []
     try:
-        folder_name = os.path.basename(os.path.dirname(md_file))
+        title = re.sub(r'(?<=\d)\.(\d{2})(am|pm)', r':\1\2', md_file)
+        folder_name = os.path.basename(os.path.dirname(title))
         formatted_name = folder_name.replace("_", " ")
         video_link = (
             f"https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}"
         )
-        md_lines.append(f"# [{formatted_name} - Meeting Summary]({video_link})\n")
+        md_lines.append(f"# [{formatted_name}]({video_link})\n")
     except:
         md_lines.append("# Meeting Summary\n")
     # Extract all topics from all batches

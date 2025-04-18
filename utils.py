@@ -385,7 +385,7 @@ def extract_topics_from_summary(summary, video_id=None, transcript_data=None):
     """
     # Updated pattern to match: **Topic - Speaker** (H:MM:SS): followed by text
     # This captures the timestamp if present
-    pattern = r'\*\*(.+?)\s*-\s*(.+?)\*\*\s*(?:\((\d+:\d{2}:\d{2})\))?\s*:'
+    pattern = r'\*\*(.+?)\s+-\s+(.+?)\*\*\s*(?:\((\d+:\d{2}:\d{2})\))?\s*:' 
     
     # Find all matches in the summary
     topic_matches = list(re.finditer(pattern, summary))
@@ -396,7 +396,8 @@ def extract_topics_from_summary(summary, video_id=None, transcript_data=None):
         topic = match.group(1).strip()
         # Keep only the first speaker if multiple are present
         speaker_raw = match.group(2).strip()
-        speaker = re.split(r'\s*&\s*|,\s*| and ', speaker_raw, maxsplit=1)[0]
+        # speaker = re.split(r'\s*&\s*|,\s*| and ', speaker_raw, maxsplit=1)[0]
+        speaker = speaker_raw
         
         # Get timestamp if present
         timestamp = match.group(3)
