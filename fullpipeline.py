@@ -216,6 +216,7 @@ def set_file_times_macos(path, timestamp):
         
         # Try using xattr if available
         try:
+            import xattr
             from osxmetadata import OSXMetaData
             
             # Create metadata object for the file
