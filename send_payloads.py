@@ -2,25 +2,34 @@ import json
 import time
 import datetime
 import smtplib
+import json
+import os
 from email.mime.text import MIMEText
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+GOOGLE_CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
+GOOGLE_CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
 
 # Load events
 with open("output/calendar_payloads.json") as f:
     events = json.load(f)
 
-# 🔧 Normalize keys: 'title' → 'summary'
+# Normalize keys: 'title' → 'summary'
 for event in events:
     if "summary" not in event and "title" in event:
         event["summary"] = event["title"]
 
-# === 1. OAuth setup ===
+# OAuth setup
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 flow = InstalledAppFlow.from_client_config({
     "installed": {
-        "client_id": "263334656736-2k5n7lbpkbrlnpm5pma7lab7e9mg6ju9.apps.googleusercontent.com",
-        "client_secret": "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",
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
         "auth_uri": "https://accounts.google.com/o/oauth2/auth",
         "token_uri": "https://oauth2.googleapis.com/token",
         "redirect_uris": ["http://localhost:8081"]
