@@ -11,6 +11,7 @@ env/
 # Generated files from the pipeline
 *.txt
 *.xlsx
+*.png
 *.html
 *.vtt
 *.md

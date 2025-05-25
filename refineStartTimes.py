@@ -203,7 +203,7 @@ def refine_start_times(xlsx_file, output_file=None):
             if col in df.columns and pd.api.types.is_numeric_dtype(df[col].dtype):
                 df[col] = df[col].astype('object')
         
-        # Process each topic
+        # Process each topic by index retrieved for rows where df['Topic'] is not empty
         for idx in topic_rows:
             topic = df.loc[idx, 'Topic']
             speaker = df.loc[idx, 'Name']
