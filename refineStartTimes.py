@@ -624,7 +624,7 @@ def main():
     parser.add_argument('--verify-timestamps', action='store_true', help='Verify and fix timestamps in markdown file')
     
     args = parser.parse_args()
-    
+    download_nltk_resources()
     try:
         # Verify timestamps if requested
         if args.verify_timestamps and os.path.exists(args.input_file):

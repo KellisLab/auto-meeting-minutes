@@ -7,7 +7,7 @@ This script processes local subtitle files without requiring a Panopto URL:
 2. Converts subtitles to plain text with timestamps
 3. Converts text to Excel format with formatting
 4. Optionally refines timestamp matching for speakers with multiple appearances
-5. Converts Excel to HTML with links and AI-generated summaries
+5. Converts Excel to HTML with links and AI-generated summaries (with or without video links)
 6. Generates markdown summary files with proper formatting
 
 Usage:
@@ -15,7 +15,11 @@ Usage:
                  [--output-dir DIRECTORY] [--meeting-name NAME] [--no-enhanced-summaries] [--skip-bold-conversion]
 
 Example:
+    # With video ID for clickable links
     python pipeline.py lecture.srt ef5959d0-da5f-4ac0-a1ad-b2aa001320a0 --meeting-name "CS101 Lecture"
+    
+    # Without video ID (no clickable links, just timestamps)
+    python pipeline.py lecture.srt --meeting-name "CS101 Lecture" --no-video-links
 """
 
 import os
@@ -100,8 +104,23 @@ def get_unique_directory_name(base_dir, folder_name):
     # Directory doesn't exist or is empty
     return folder_name
 
+def validate_video_id(video_id):
+    """
+    Validate video ID format (Panopto UUID format)
+    
+    Args:
+        video_id (str): Video ID to validate
+        
+    Returns:
+        bool: True if valid format, False otherwise
+    """
+    if not video_id:
+        return False
+    return bool(re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', video_id))
+
 def run_pipeline(input_file, video_id=None, skip_refinement=False, html_format="numbered", 
-                output_dir=None, meeting_name=None, enhanced_summaries=True, skip_bold_conversion=False):
+                output_dir=None, meeting_name=None, enhanced_summaries=True, skip_bold_conversion=False,
+                no_video_links=False):
     """Run the transcript processing pipeline starting from a local VTT/SRT file"""
     
     # Ensure input file exists
@@ -153,17 +172,42 @@ def run_pipeline(input_file, video_id=None, skip_refinement=False, html_format="
     
     logger.info(f"Using file prefix: {file_prefix}")
     
-    # Prompt for video_id if not provided
-    if video_id is None:
-        print("\nA Panopto video ID is required to generate timestamp links.")
-        print("Example: ef5959d0-da5f-4ac0-a1ad-b2aa001320a0")
-        video_id = input("Enter Panopto video ID: ")
-        
-        # Validate video ID format
-        if not re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', video_id):
-            logger.warning("Warning: The provided video ID doesn't match the expected format.")
-            if input("Continue anyway? (y/n): ").lower() != 'y':
-                sys.exit(1)
+    # Handle video ID for timestamp links
+    use_video_links = False
+    if not no_video_links:
+        if video_id is None:
+            print("\nTo generate clickable timestamp links, a video ID is needed.")
+            print("You can either:")
+            print("1. Provide a Panopto video ID (format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)")
+            print("2. Skip video links and generate summaries with text-only timestamps")
+            print("")
+            choice = input("Enter video ID or press Enter to skip video links: ").strip()
+            
+            if choice:
+                video_id = choice
+                if validate_video_id(video_id):
+                    use_video_links = True
+                    logger.info(f"Using video ID: {video_id}")
+                else:
+                    logger.warning("Warning: The provided video ID doesn't match the expected format.")
+                    if input("Continue anyway? (y/n): ").lower() == 'y':
+                        use_video_links = True
+                    else:
+                        logger.info("Proceeding without video links")
+                        video_id = None
+            else:
+                logger.info("Proceeding without video links")
+                video_id = None
+        else:
+            if validate_video_id(video_id):
+                use_video_links = True
+                logger.info(f"Using provided video ID: {video_id}")
+            else:
+                logger.warning("Warning: The provided video ID doesn't match the expected format.")
+                use_video_links = True  # Still try to use it
+    else:
+        logger.info("Video links disabled by user request")
+        video_id = None
     
     # Get the directory where this script is located
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -234,12 +278,15 @@ def run_pipeline(input_file, video_id=None, skip_refinement=False, html_format="
         xlsx2html = import_module_from_file("xlsx2html", xlsx2html_path)
         
         # Process the refined Excel file with corrected parameter order
-        # Fix: Removed html_format and summary_file parameters that were causing conflicts
         try:
-            logger.info("Creating HTML with speaker summaries...")
+            if use_video_links and video_id:
+                logger.info("Creating HTML with speaker summaries and clickable timestamp links...")
+            else:
+                logger.info("Creating HTML with speaker summaries and text-only timestamps...")
+            
             result_files = xlsx2html.process_xlsx(
                 refined_xlsx_file,
-                video_id,
+                video_id,  # This can be None now
                 html_file,
                 speaker_summary_file,
                 meeting_summary_md_file,
@@ -256,6 +303,10 @@ def run_pipeline(input_file, video_id=None, skip_refinement=False, html_format="
             logger.info(f"Speaker summary Markdown: {speaker_summary_file}")
             logger.info(f"Meeting summaries HTML: {summary_file}")
             logger.info(f"Meeting summaries Markdown: {meeting_summary_md_file}")
+            
+            if not use_video_links:
+                logger.info("Note: Generated summaries contain text-only timestamps (no clickable links)")
+                
         except Exception as e:
             logger.error(f"Error in xlsx2html processing: {e}")
             logger.warning(f"Warning: Error in HTML generation: {str(e)}")
@@ -312,7 +363,8 @@ def run_pipeline(input_file, video_id=None, skip_refinement=False, html_format="
         "html_file": html_file,
         "summary_file": summary_file,
         "speaker_summary_file": speaker_summary_file,
-        "meeting_summary_md_file": meeting_summary_md_file
+        "meeting_summary_md_file": meeting_summary_md_file,
+        "use_video_links": use_video_links
     }
 
 def main():
@@ -320,7 +372,7 @@ def main():
         description='Process local VTT/SRT files to generate transcript summaries'
     )
     parser.add_argument('input_file', help='Input VTT or SRT file')
-    parser.add_argument('video_id', nargs='?', help='Panopto video ID for timestamp links')
+    parser.add_argument('video_id', nargs='?', help='Panopto video ID for timestamp links (optional)')
     parser.add_argument('--skip-refinement', action='store_true', 
                       help='Skip the start time refinement step')
     parser.add_argument('--html-format', choices=['simple', 'numbered'], default='numbered',
@@ -333,6 +385,8 @@ def main():
                       help='Disable enhanced speaker summaries with multiple topics (enabled by default)')
     parser.add_argument('--skip-bold-conversion', action='store_true',
                       help='Skip converting markdown-style bold formatting to HTML bold tags')
+    parser.add_argument('--no-video-links', action='store_true',
+                      help='Generate summaries without clickable video timestamp links (text-only timestamps)')
     
     args = parser.parse_args()
     
@@ -346,7 +400,8 @@ def main():
         args.output_dir,
         args.meeting_name,
         not args.no_enhanced_summaries,  # Inverted flag since enhanced summaries is now default
-        args.skip_bold_conversion
+        args.skip_bold_conversion,
+        args.no_video_links
     )
 
 if __name__ == "__main__":

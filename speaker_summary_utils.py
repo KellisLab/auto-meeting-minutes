@@ -226,7 +226,7 @@ def generate_enhanced_speaker_summary_html(transcript_data, video_id, html_file=
     
     Args:
         transcript_data (list): List of transcript entry dictionaries
-        video_id (str): Panopto video ID
+        video_id (str): Panopto video ID (can be None for text-only timestamps)
         html_file (str, optional): Path to output HTML file
         api_key (str, optional): OpenAI API key
         summaries_data (dict, optional): Pre-generated summaries data
@@ -238,9 +238,9 @@ def generate_enhanced_speaker_summary_html(transcript_data, video_id, html_file=
     html_content = '<!DOCTYPE html>\n<html>\n<head>\n<title>Speaker Summaries</title>\n'
     html_content += '<style>\n'
     # Basic styling
-    html_content += 'body { font-family: Arial, sans-serif; margin: 20px; font-size: 11px; }\n'
-    # Title styling - Cambria, 11px, #c0504d, underlined
-    html_content += 'h1 { font-family: Cambria, serif; font-size: 11px; color: #c0504d; text-decoration: underline; margin-bottom: 15px; }\n'
+    html_content += 'body { font-family: Arial, sans-serif; margin: 20px; font-size: 11pt; }\n'
+    # Title styling - Cambria, 11pt, #c0504d, underlined, no line break
+    html_content += 'h1 { font-family: Cambria, serif; font-size: 11pt; color: #c0504d; text-decoration: underline; display: inline-block; margin: 0; padding: 0; }\n'
     html_content += 'h1 a { color: #c0504d; text-decoration: underline; }\n'
     # Speaker styling - bold, purple, underlined
     html_content += '.speaker { font-weight: bold; color: #7030a0; text-decoration: underline; margin-bottom: 3px; }\n'
@@ -249,7 +249,7 @@ def generate_enhanced_speaker_summary_html(transcript_data, video_id, html_file=
     # Topic title styling - blue, underlined
     html_content += '.topic-title { font-weight: bold; color: #1f497d; text-decoration: underline; }\n'
     # Ordered list styling
-    html_content += 'ol { list-style-position: outside; padding-left: 12px; margin-top: 5px; }\n'
+    html_content += 'ol { list-style-position: outside; padding-left: 12px; margin-top: 0px; }\n'
     html_content += 'ol li { margin-bottom: 10px; }\n'
     # Link styling
     html_content += 'a { color: inherit; text-decoration: none; }\n'
@@ -261,10 +261,14 @@ def generate_enhanced_speaker_summary_html(transcript_data, video_id, html_file=
         title = re.sub(r'(?<=\d)\.(\d{2})(am|pm)', r':\1\2', html_file)
         folder_name = os.path.basename(os.path.dirname(title))
         formatted_name = folder_name.replace('_', ' ')
-        video_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}'
-        html_content += f'<h1><a href="{video_link}">{formatted_name} <span style="color: #1155cc;">(link)</span></a></h1>\n'
+        
+        if video_id:
+            video_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}'
+            html_content += f'<h1><a href="{video_link}">{formatted_name} <span style="color: #1155cc;">(link)</span></a></h1><ol>\n'
+        else:
+            html_content += f'<h1>{formatted_name}</h1><ol>\n'
     except:
-        html_content += '<h1>Speaker Summaries</h1>\n'
+        html_content += '<h1>Speaker Summaries</h1><ol>\n'
     
     # Get summaries data if not provided
     if summaries_data is None:
@@ -272,10 +276,6 @@ def generate_enhanced_speaker_summary_html(transcript_data, video_id, html_file=
             from utils import get_api_key
             api_key = get_api_key()
         summaries_data = generate_speaker_summaries_data(transcript_data, api_key)
-    
-    # Create an ordered list for speakers
-    html_content += '<ol>\n'
-    
     # Process each speaker
     for speaker_idx, (speaker, topics) in enumerate(summaries_data.items(), 1):
         # Speaker name as a list item with proper styling
@@ -286,17 +286,17 @@ def generate_enhanced_speaker_summary_html(transcript_data, video_id, html_file=
             # Get the pre-generated summary
             topic_summary = topic['summary']
             
-            # Format timestamp link with hyperlink
+            # Format timestamp link with hyperlink or text-only
             timestamp_seconds = topic['start_seconds']
             timestamp_str = topic['start_time']
-            video_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}&start={timestamp_seconds}'
             
-            # Add the topic with number in parentheses (1), (2), etc.
-            html_content += f'<div class="topic">(<span class="topic-title">{i}) {topic_summary["title"]}</span> <a href="{video_link}"><span class="timestamp">({timestamp_str})</span></a>: {topic_summary["content"]}</div>\n'
-            
-            # # Add a line break between topics if not the last topic
-            # if i < len(topics):
-            #     html_content += '<br>\n'
+            if video_id:
+                video_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}&start={timestamp_seconds}'
+                # Add the topic with number in parentheses (1), (2), etc. with clickable link
+                html_content += f'<div class="topic">(<span class="topic-title">{i}) {topic_summary["title"]}</span> <a href="{video_link}"><span class="timestamp">({timestamp_str})</span></a>: {topic_summary["content"]}</div>\n'
+            else:
+                # Add the topic with number in parentheses (1), (2), etc. with text-only timestamp
+                html_content += f'<div class="topic">(<span class="topic-title">{i}) {topic_summary["title"]}</span> <span class="timestamp">({timestamp_str})</span>: {topic_summary["content"]}</div>\n'
         
         # Close the list item for this speaker
         html_content += '</li>\n'
@@ -308,7 +308,8 @@ def generate_enhanced_speaker_summary_html(transcript_data, video_id, html_file=
     if html_file:
         with open(html_file, 'w', encoding='utf-8') as f:
             f.write(html_content)
-        print(f"Generated enhanced speaker summary HTML with numbered speakers: {html_file}")
+        link_type = "clickable links" if video_id else "text-only timestamps"
+        print(f"Generated enhanced speaker summary HTML with numbered speakers and {link_type}: {html_file}")
     
     return html_content
 
@@ -318,7 +319,7 @@ def generate_enhanced_speaker_summary_markdown(transcript_data, video_id, md_fil
     
     Args:
         transcript_data (list): List of transcript entry dictionaries
-        video_id (str): Panopto video ID
+        video_id (str): Panopto video ID (can be None for text-only timestamps)
         md_file (str, optional): Path to output markdown file
         api_key (str, optional): OpenAI API key
         summaries_data (dict, optional): Pre-generated summaries data
@@ -336,12 +337,15 @@ def generate_enhanced_speaker_summary_markdown(transcript_data, video_id, md_fil
         title = re.sub(r'(?<=\d)\.(\d{2})(am|pm)', r':\1\2', md_file)
         folder_name = os.path.basename(os.path.dirname(title))
         formatted_name = folder_name.replace("_", " ")
-        video_link = (
-            f"https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}"
-        )
-        md_lines.append(f"# [{formatted_name}]({video_link})\n")
+        
+        if video_id:
+            video_link = f"https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}"
+            md_lines.append(f"# [{formatted_name}]({video_link})\n")
+        else:
+            md_lines.append(f"# {formatted_name}\n")
     except:
         md_lines.append("# Meeting Summary\n")
+        
     # Process each speaker
     for speaker, topics in summaries_data.items():
         # Speaker name as header
@@ -352,14 +356,17 @@ def generate_enhanced_speaker_summary_markdown(transcript_data, video_id, md_fil
             # Get the pre-generated summary
             topic_summary = topic['summary']
             
-            # Format timestamp link with hyperlink
+            # Format timestamp link with hyperlink or text-only
             timestamp_seconds = topic['start_seconds']
             timestamp_str = topic['start_time']
-            video_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}&start={timestamp_seconds}'
             
-            # Add the topic with number, timestamp and summary
-            # Format exactly matches the example: **(1) Topic **[(timestamp)](link): Content
-            md_lines.append(f"**({i}) {topic_summary['title']} **[({timestamp_str})]({video_link}): {topic_summary['content']}")
+            if video_id:
+                video_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}&start={timestamp_seconds}'
+                # Add the topic with number, timestamp and summary with clickable link
+                md_lines.append(f"**({i}) {topic_summary['title']} **[({timestamp_str})]({video_link}): {topic_summary['content']}")
+            else:
+                # Add the topic with number, timestamp and summary with text-only timestamp
+                md_lines.append(f"**({i}) {topic_summary['title']} **({timestamp_str}): {topic_summary['content']}")
         
         # Add blank line between speakers if not the last speaker
         if speaker != list(summaries_data.keys())[-1]:
@@ -369,7 +376,8 @@ def generate_enhanced_speaker_summary_markdown(transcript_data, video_id, md_fil
     if md_file:
         with open(md_file, 'w', encoding='utf-8') as f:
             f.write('\n'.join(md_lines))
-        print(f"Generated enhanced speaker summary markdown: {md_file}")
+        link_type = "clickable links" if video_id else "text-only timestamps"
+        print(f"Generated enhanced speaker summary markdown with {link_type}: {md_file}")
     
     return '\n'.join(md_lines)
 
