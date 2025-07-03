@@ -181,17 +181,14 @@ def summarize_speaker_topic(speaker, topic_text, topic_number, api_key=None):
     try:
         openai.api_key = api_key
         
-        # Construct prompt for topic-specific summary
         prompt = (
             f"Generate a concise summary of this speaker's contribution to a specific topic.\n\n"
             f"Instructions:\n"
             f"1. Return a JSON object with two fields: 'title' and 'content'\n"
             f"2. The 'title' should be a brief (3-7 words) descriptive title of the topic discussed\n"
             f"3. The 'content' should be a detailed summary of the speaker's contribution\n"
-            f"4. Use <b>bold</b> for important technical terms and concepts\n"
-            f"5. Keep content to a single paragraph with no line breaks\n"
-            f"6. Don't include the speaker's name in the content since it will be shown separately\n"
-            f"7. Be technical and precise\n\n"
+            f"4. MUST USE <b>bold</b> for important technical terms and concepts\n"
+            f"5. Keep content to a single paragraph with no line breaks\n\n"
             f"TRANSCRIPT FROM {speaker} (TOPIC #{topic_number}):\n\n{topic_text}"
         )
         
@@ -199,7 +196,7 @@ def summarize_speaker_topic(speaker, topic_text, topic_number, api_key=None):
         response = openai.chat.completions.create(
             model=MODEL,
             messages=[
-                {"role": "system", "content": "You are a technical meeting summarizer."},
+                {"role": "system", "content": "You are a technical meeting summarizer. MUST USE <b>bold</b> for important technical terms and concepts."},
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"},
@@ -209,8 +206,8 @@ def summarize_speaker_topic(speaker, topic_text, topic_number, api_key=None):
         # Parse JSON response
         summary_json = json.loads(response.choices[0].message.content)
         return {
-            'title': summary_json['title'],
-            'content': summary_json['content']
+            'title': summary_json.get('title', f'Topic {topic_number}'),
+            'content': summary_json.get('content', topic_text[:100] + '...')
         }
     
     except Exception as e:
@@ -219,6 +216,18 @@ def summarize_speaker_topic(speaker, topic_text, topic_number, api_key=None):
             'title': f"Topic {topic_number}",
             'content': f"Speaker discussed: {topic_text[:100]}..."
         }
+    
+def _format_meeting_name(raw_name: str) -> str:
+    """Format meeting name for display in HTML/Markdown."""
+    import re
+    
+    # Replace underscores with spaces
+    formatted = raw_name.replace('_', ' ')
+    
+    # Fix timestamp formatting (e.g., "4.00pm" -> "4:00pm")
+    formatted = re.sub(r'(?<=\d)\.(\d{2})(am|pm)', r':\1\2', formatted)
+    
+    return formatted
 
 def generate_enhanced_speaker_summary_html(transcript_data, video_id, html_file=None, api_key=None, summaries_data=None):
     """
@@ -226,7 +235,7 @@ def generate_enhanced_speaker_summary_html(transcript_data, video_id, html_file=
     
     Args:
         transcript_data (list): List of transcript entry dictionaries
-        video_id (str): Panopto video ID (can be None for text-only timestamps)
+        video_id (str): Panopto video ID
         html_file (str, optional): Path to output HTML file
         api_key (str, optional): OpenAI API key
         summaries_data (dict, optional): Pre-generated summaries data
@@ -234,41 +243,31 @@ def generate_enhanced_speaker_summary_html(transcript_data, video_id, html_file=
     Returns:
         str: Generated HTML content
     """
-    # Add HTML header with styles
     html_content = '<!DOCTYPE html>\n<html>\n<head>\n<title>Speaker Summaries</title>\n'
     html_content += '<style>\n'
-    # Basic styling
     html_content += 'body { font-family: Arial, sans-serif; margin: 20px; font-size: 11pt; }\n'
-    # Title styling - Cambria, 11pt, #c0504d, underlined, no line break
-    html_content += 'h1 { font-family: Cambria, serif; font-size: 11pt; color: #c0504d; text-decoration: underline; display: inline-block; margin: 0; padding: 0; }\n'
-    html_content += 'h1 a { color: #c0504d; text-decoration: underline; }\n'
-    # Speaker styling - bold, purple, underlined
+    html_content += 'h1 { font-family: Cambria, serif; font-size: 11pt; color: #c0504d; text-decoration: underline; margin-bottom: 0px; margin-top: 0px; display: inline-block; }\n'
+    html_content += '.url-line { color: #1155cc; text-decoration: none; font-size: 11pt; margin-top: 2px; margin-bottom: 2px; display: block; }\n'
     html_content += '.speaker { font-weight: bold; color: #7030a0; text-decoration: underline; margin-bottom: 3px; }\n'
-    # Topic styling
     html_content += '.topic { margin-left: 0px; margin-bottom: 3px; }\n'
-    # Topic title styling - blue, underlined
     html_content += '.topic-title { font-weight: bold; color: #1f497d; text-decoration: underline; }\n'
-    # Ordered list styling
-    html_content += 'ol { list-style-position: outside; padding-left: 12px; margin-top: 0px; }\n'
-    html_content += 'ol li { margin-bottom: 10px; }\n'
-    # Link styling
+    html_content += 'ol { list-style-position: outside; padding-left: 12px; margin-top: 2px; }\n'
+    html_content += 'ol li { margin-bottom: 0px; }\n'
     html_content += 'a { color: inherit; text-decoration: none; }\n'
     html_content += '.timestamp { color: #1155cc; }\n'
+    html_content += 'b { font-weight: bold; }\n'
     html_content += '</style>\n</head>\n<body>\n'
     
-    # Try to extract a title from the file path
     try:
-        title = re.sub(r'(?<=\d)\.(\d{2})(am|pm)', r':\1\2', html_file)
-        folder_name = os.path.basename(os.path.dirname(title))
-        formatted_name = folder_name.replace('_', ' ')
-        
-        if video_id:
-            video_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}'
-            html_content += f'<h1><a href="{video_link}">{formatted_name} <span style="color: #1155cc;">(link)</span></a></h1><ol>\n'
-        else:
-            html_content += f'<h1>{formatted_name}</h1><ol>\n'
+        folder_name = os.path.basename(os.path.dirname(html_file))
+        formatted_name = _format_meeting_name(folder_name)
+        html_content += f'<h1>{formatted_name}</h1>\n'
     except:
-        html_content += '<h1>Speaker Summaries</h1><ol>\n'
+        html_content += '<h1>Speaker Summaries</h1>\n'
+
+    if video_id:
+        video_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}'
+        html_content += f'<a href="{video_link}" class="url-line">{video_link}</a>\n'
     
     # Get summaries data if not provided
     if summaries_data is None:
@@ -276,6 +275,10 @@ def generate_enhanced_speaker_summary_html(transcript_data, video_id, html_file=
             from utils import get_api_key
             api_key = get_api_key()
         summaries_data = generate_speaker_summaries_data(transcript_data, api_key)
+    
+    # Create an ordered list for speakers
+    html_content += '<ol>\n'
+    
     # Process each speaker
     for speaker_idx, (speaker, topics) in enumerate(summaries_data.items(), 1):
         # Speaker name as a list item with proper styling
@@ -286,17 +289,13 @@ def generate_enhanced_speaker_summary_html(transcript_data, video_id, html_file=
             # Get the pre-generated summary
             topic_summary = topic['summary']
             
-            # Format timestamp link with hyperlink or text-only
+            # Format timestamp link with hyperlink
             timestamp_seconds = topic['start_seconds']
             timestamp_str = topic['start_time']
+            video_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}&start={timestamp_seconds}'
             
-            if video_id:
-                video_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}&start={timestamp_seconds}'
-                # Add the topic with number in parentheses (1), (2), etc. with clickable link
-                html_content += f'<div class="topic">(<span class="topic-title">{i}) {topic_summary["title"]}</span> <a href="{video_link}"><span class="timestamp">({timestamp_str})</span></a>: {topic_summary["content"]}</div>\n'
-            else:
-                # Add the topic with number in parentheses (1), (2), etc. with text-only timestamp
-                html_content += f'<div class="topic">(<span class="topic-title">{i}) {topic_summary["title"]}</span> <span class="timestamp">({timestamp_str})</span>: {topic_summary["content"]}</div>\n'
+            # Add the topic with number in parentheses (1), (2), etc. - UPDATED FORMAT
+            html_content += f'<div class="topic">(<span class="topic-title">{i}) {topic_summary["title"]}</span> <a href="{video_link}"><span class="timestamp">({timestamp_str})</span></a>: {topic_summary["content"]}</div>\n'
         
         # Close the list item for this speaker
         html_content += '</li>\n'
@@ -308,8 +307,7 @@ def generate_enhanced_speaker_summary_html(transcript_data, video_id, html_file=
     if html_file:
         with open(html_file, 'w', encoding='utf-8') as f:
             f.write(html_content)
-        link_type = "clickable links" if video_id else "text-only timestamps"
-        print(f"Generated enhanced speaker summary HTML with numbered speakers and {link_type}: {html_file}")
+        print(f"Generated enhanced speaker summary HTML with numbered speakers: {html_file}")
     
     return html_content
 

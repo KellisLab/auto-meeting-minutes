@@ -35,7 +35,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables from .env file if present
-load_dotenv()
+load_dotenv(override=True)
 
 # Import our modules directly
 def import_module_from_file(module_name, file_path):
@@ -279,7 +279,7 @@ def set_file_times_windows(path, timestamp):
         # Save script to a temporary file
         temp_script = tempfile.NamedTemporaryFile(suffix='.ps1', delete=False)
         temp_script_path = temp_script.name
-        with open(temp_script_path, 'w') as f:
+        with open(temp_script_path, 'w', encoding='utf-8') as f:
             f.write(ps_script)
         temp_script.close()
         
