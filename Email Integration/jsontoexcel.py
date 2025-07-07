@@ -142,7 +142,7 @@ def main():
     Main function to convert meeting analysis to Excel
     """
     # Input and output file paths
-    input_file = "/Users/sadhikakamchetty/Desktop/auto-meeting-minutes-backup copy/meeting_code_analysis_20250608_150654.md"
+    input_file = "filename.md"
     output_file = "meeting_analysis.xlsx"  # Change this to your desired output path
     
     try:
