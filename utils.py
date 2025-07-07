@@ -13,7 +13,7 @@ import json
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
-load_dotenv()
+load_dotenv(override=True)
 
 # Constants
 OPENAI_API_KEY = os.getenv("API_KEY")
@@ -377,7 +377,7 @@ def extract_topics_from_summary(summary, video_id=None, transcript_data=None):
     
     Args:
         summary (str): The batch summary text
-        video_id (str, optional): Panopto video ID for creating direct links
+        video_id (str, optional): Panopto video ID for creating direct links (can be None)
         transcript_data (list, optional): Transcript data for better timestamp matching
         
     Returns:
@@ -396,7 +396,6 @@ def extract_topics_from_summary(summary, video_id=None, transcript_data=None):
         topic = match.group(1).strip()
         # Keep only the first speaker if multiple are present
         speaker_raw = match.group(2).strip()
-        # speaker = re.split(r'\s*&\s*|,\s*| and ', speaker_raw, maxsplit=1)[0]
         speaker = speaker_raw
         
         # Get timestamp if present
@@ -404,8 +403,8 @@ def extract_topics_from_summary(summary, video_id=None, transcript_data=None):
         timestamp_seconds = None
         video_link = None
         
-        # Convert timestamp to seconds if present and video_id is provided
-        if timestamp and video_id:
+        # Convert timestamp to seconds if present
+        if timestamp:
             timestamp_seconds = time_str_to_seconds(timestamp)
             
             # If transcript data is provided, try to find a better timestamp match for this topic/speaker
@@ -421,8 +420,9 @@ def extract_topics_from_summary(summary, video_id=None, transcript_data=None):
                     # Use the matched timestamp instead
                     timestamp_seconds = best_match.get('matched_seconds', best_match.get('seconds', timestamp_seconds))
             
-            # Create the video link with the appropriate timestamp
-            video_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}&start={timestamp_seconds}'
+            # Create the video link only if video_id is provided
+            if video_id and timestamp_seconds is not None:
+                video_link = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}&start={timestamp_seconds}'
         
         start_pos = match.start()
         end_pos = match.end()
@@ -437,7 +437,7 @@ def extract_topics_from_summary(summary, video_id=None, transcript_data=None):
             'speaker': speaker,
             'timestamp': timestamp,
             'timestamp_seconds': timestamp_seconds,
-            'video_link': video_link,
+            'video_link': video_link,  # Will be None if no video_id provided
             'position': start_pos,
             'content': content,
             'full_match': match.group(0)
@@ -477,13 +477,14 @@ def update_speaker_timestamps_for_topics(topics, transcript_data):
                 topic['timestamp_seconds'] = matched_seconds
                 topic['timestamp'] = matched_time_str
                 
-                # Update the video link as well if video_id is present
-                if 'video_link' in topic and topic['video_link']:
-                    video_id = re.search(r'id=([^&]+)', topic['video_link']).group(1)
-                    topic['video_link'] = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}&start={matched_seconds}'
+                # Update the video link as well if video_link exists and we can extract video_id
+                if topic.get('video_link'):
+                    video_id_match = re.search(r'id=([^&]+)', topic['video_link'])
+                    if video_id_match:
+                        video_id = video_id_match.group(1)
+                        topic['video_link'] = f'https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id={video_id}&start={matched_seconds}'
     
     return topics
-
 # -------------------------------------------------------------
 # OpenAI API Utilities
 # -------------------------------------------------------------
