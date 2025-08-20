@@ -168,7 +168,7 @@ def generate_meeting_summaries_html(
             )
 
             html_content += f'<a href="{topic_link}" class="topic-link">'
-            html_content += f'{topic} - {speaker} <span style="color: #1155cc;">({corrected_timestamp})</span></a>'
+            html_content += f'{topic} <span style="color: #1155cc;">({corrected_timestamp})</span></a>'
         else:
             # Fallback: Find the entry for this speaker in the batch
             names = re.split(r'\s*&\s*|,\s*| and ', speaker)
@@ -319,14 +319,14 @@ def generate_meeting_summaries_markdown(
                 )
             else:
                 # If no entry found, just display the topic without a link
-                md_lines.append(f"**{topic} - {speaker}**")
+                md_lines.append(f"**{topic}")
         else:
             # No video_id provided - use text-only timestamps
             if topic_info["timestamp_seconds"] is not None:
                 corrected_timestamp = verify_timestamp_format(
                     topic_info["timestamp"], topic_info["timestamp_seconds"]
                 )
-                md_lines.append(f"**{topic} - {speaker}** ({corrected_timestamp})")
+                md_lines.append(f"**{topic} ({corrected_timestamp})")
             else:
                 # Find timestamp from batch entry
                 speaker_entry = None
@@ -339,9 +339,9 @@ def generate_meeting_summaries_markdown(
                     speaker_time = verify_timestamp_format(
                         speaker_entry.get("time_str", ""), speaker_entry["seconds"]
                     )
-                    md_lines.append(f"**{topic} - {speaker}** ({speaker_time})")
+                    md_lines.append(f"**{topic} ({speaker_time})")
                 else:
-                    md_lines.append(f"**{topic} - {speaker}**")
+                    md_lines.append(f"**{topic}")
 
         # Add the content for this topic
         md_lines.append(f"{content}\n")
@@ -418,32 +418,72 @@ def summarize_batch(batch_entries, batch_number, api_key):
         for i, ts in enumerate(sorted_timestamps, 1):
             timestamp_reference += f"  {i}. {ts['time_str']} - '{ts['text']}...'\n"
 
+    # Get the earliest timestamp for the first topic requirement
+    earliest_seconds = min(entry["seconds"] for entry in batch_entries)
+    earliest_timestamp = seconds_to_time_str(earliest_seconds)
+
     try:
         openai.api_key = api_key
 
-        prompt = (
-            "Your task is to create a structured summary of this meeting section.\n\n"
-            "IMPORTANT: You MUST create summaries starting from the EARLIEST content in this batch, even if it seems introductory or less substantive\n\n"
-            "OUTPUT FORMAT REQUIREMENTS (CRITICAL):\n"
-            "1. Each topic must follow this EXACT format:\n"
-            "   **Topic Title - Speaker Name** (H:MM:SS): Content...\n"
-            "2. The format must be followed precisely with NO exceptions\n"
-            "3. Use only exact timestamps from the provided SPEAKER TIMESTAMPS section\n"
-            "4. BOLD important terms within the content: <b>terms</b>\n"
-            "5. Content should be in paragraph form (no bullet points or line breaks)\n\n"
-            "TIMESTAMP SELECTION RULES:\n"
-            "1. Choose the MOST RELEVANT timestamp from the provided options for each speaker\n"
-            "2. Match the timestamp to where the specific topic is actually discussed\n"
-            "3. NEVER create or modify timestamps - use only those provided\n\n"
-            "CONTENT REQUIREMENTS:\n"
-            "1. Thoroughly explain each topic with technical precision\n"
-            "2. Include interactions between different speakers\n"
-            "3. Be detailed and comprehensive\n"
-            "4. Do not hallucinate information\n"
-            "5. Do not include a concluding summary paragraph\n\n"
-            f"{timestamp_reference}\n\n"
-            f"MEETING TRANSCRIPT BATCH #{batch_number} ({start_time} - {end_time}):\n\n{batch_text}"
-        )
+        prompt = f"""You are producing a structured summary of a meeting transcript batch.
+
+NON-NEGOTIABLE GUARDRAILS:
+- You MUST begin with the first topical content **even if it is lightweight** (greetings, agenda, setup).
+- The **FIRST output line MUST use the earliest timestamp in this batch window**: {earliest_timestamp}
+- If the earliest content is simple, title it: "Introductions & Setup".
+- Never invent or modify timestamps. Use only those in SPEAKER TIMESTAMPS.
+- Obey the exact output format and paragraph-only content rule.
+
+OUTPUT FORMAT (CRITICAL; EXACTLY THIS):
+Each topic must be a single line in this exact pattern:
+**Topic Title - Speaker Name** (H:MM:SS): Content...
+
+Formatting rules:
+-- Do NOT include speaker names.
+- Use only exact timestamps from the SPEAKER TIMESTAMPS section.
+- Bold important terms with <b>...</b>.
+- Content must be a single paragraph (no bullets, no line breaks).
+- Do NOT add a concluding summary.
+
+TIMESTAMP SELECTION RULES:
+1) For each topic, choose the MOST RELEVANT timestamp from SPEAKER TIMESTAMPS for the speaker actually discussing that topic.
+2) The FIRST topic MUST use the earliest timestamp from this batch window: {earliest_timestamp}
+3) If multiple candidate timestamps match a topic, break ties deterministically:
+   a) Prefer the earliest timestamp ≥ the point where the topic begins in this batch.
+   b) If still tied, choose the chronologically earliest timestamp.
+4) Never create, edit, or infer a timestamp.
+
+CONTENT REQUIREMENTS:
+- Be technically precise and comprehensive.
+- Include interactions between speakers when relevant (e.g., short mentions like "X responds to Y").
+- Use the speaker names exactly as they appear in the transcript.
+- Use the exact timestamps provided in SPEAKER TIMESTAMPS.
+- Write in Third Person.
+- Ignore boilerplate or system messages such as "[Auto-generated transcript...]", "[music]", "[applause]", "[inaudible]", etc. Do not produce topics for these.
+- Paraphrase; do NOT copy from the transcript.
+- Do not quote or include dialogue. Do not include first-person phrasing (no “I/We/You…”).
+- Avoid proper nouns unless needed for clarity (use roles when possible).
+
+
+
+- Do not hallucinate.
+
+INTERNAL SELF-CHECK (DO NOT PRINT): Verify privately that
+- first line uses {earliest_timestamp}
+- every line matches the required pattern
+- all timestamps appear in SPEAKER TIMESTAMPS
+- no bullets or extra line breaks
+- everything is third person
+If any answer is NO, fix the output and re-check before returning.
+AFTER YOU SELF-CHECK, RETURN ONLY THE TOPIC LINES—NO EXPLANATIONS, NO CHECKLIST, NO EXTRA TEXT.
+
+
+
+{timestamp_reference}
+
+MEETING TRANSCRIPT BATCH #{batch_number} ({start_time} - {end_time}):
+
+{batch_text}"""
 
         # Using chat completions API
         response = openai.chat.completions.create(
