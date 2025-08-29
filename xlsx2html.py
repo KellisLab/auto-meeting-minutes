@@ -28,6 +28,12 @@ import openai
 from dotenv import load_dotenv
 import numpy as np
 import importlib.util
+import requests
+import base64
+from io import BytesIO
+import io 
+from utils import screenshot_panopto_as_image
+
 
 # Import utility functions from utils.py
 from utils import (
@@ -54,6 +60,9 @@ from speaker_summary_utils import (
     generate_speaker_summaries_data,
 )
 
+from PIL import Image
+import io
+
 
 # -------------------------------------------------------------
 # Constants and Configuration
@@ -66,13 +75,14 @@ MODEL = os.getenv("GPT_MODEL", "gpt-4o")
 # Default batch size for meeting summaries (in minutes)
 DEFAULT_BATCH_SIZE_MINUTES = 40
 ENHANCED_SUMMARIES_AVAILABLE = True
+RESIZE_SCALE = 0.5 # constant to resize the images to 50% of their original size
 
 
 # -------------------------------------------------------------
 # HTML and Markdown Generation Functions
 # -------------------------------------------------------------
 def generate_meeting_summaries_html(
-    batches, batch_summaries, video_id, html_file, transcript_data=None
+    batches, batch_summaries, video_id, html_file, transcript_data=None, images_to_be_embedded_per_topic=None
 ):
     """
     Generate HTML file with meeting batch summaries that include clickable timestamp links
@@ -85,6 +95,7 @@ def generate_meeting_summaries_html(
         video_id (str): Panopto video ID
         html_file (str): Output HTML file path
         transcript_data (list, optional): Full transcript data for better timestamp matching
+        images_to_be_embedded_per_topic (dict, optional): mapping each topic to a list of images to be embedded for that topic
 
     Returns:
         str: Path to the generated HTML file
@@ -185,6 +196,30 @@ def generate_meeting_summaries_html(
         # Add the content for this topic
         list_items_html.append(f'<div class="topic-content">{content}</div></li>')
 
+        # only if there are images for this topic
+        key = f"{topic} - {speaker}"
+        accumulated_descriptions = []
+
+        if images_to_be_embedded_per_topic and key in images_to_be_embedded_per_topic:
+            list_items_html.append('<h4 class="topic-heading">Images</h4>')
+            for img in images_to_be_embedded_per_topic[key]:
+                # correctly Base64‐encode
+                b64 = base64.b64encode(img['bytes']).decode('ascii')
+                # use double-quotes for the f‐string so we can single‐quote HTML attributes
+                list_items_html.append(
+                    f"<img src='data:image/jpeg;base64,{b64}' "
+                    f"alt='{img['timestamp']}'/>"
+                )
+                # Add description as bullet point if it exists
+                if 'description' in img:
+                    accumulated_descriptions.append(img['description'])
+
+        if accumulated_descriptions:
+            list_items_html.append('<h4 class="topic-heading">Descriptions</h4>')
+            for description in accumulated_descriptions:
+                list_items_html.append(f"<ul><li>{description}</li></ul>")
+
+
     # Combine all lines into HTML
     html_content = "<!DOCTYPE html>\n<html>\n<head>\n<title>Meeting Summaries</title>\n"
     html_content += "<style>\n"
@@ -224,7 +259,7 @@ def generate_meeting_summaries_html(
 
 
 def generate_meeting_summaries_markdown(
-    batches, batch_summaries, video_id, md_file, transcript_data=None
+    batches, batch_summaries, video_id, md_file, transcript_data=None, images_to_be_embedded_per_topic=None
 ):
     """
     Generate Markdown file with meeting batch summaries that include clickable timestamp links
@@ -237,6 +272,7 @@ def generate_meeting_summaries_markdown(
         video_id (str): Panopto video ID
         md_file (str): Output Markdown file path
         transcript_data (list, optional): Full transcript data for better timestamp matching
+        images_to_be_embedded_per_topic (dict, optional): mapping each topic to a list of images to be embedded for that topic
 
     Returns:
         str: Path to the generated Markdown file
@@ -259,7 +295,8 @@ def generate_meeting_summaries_markdown(
         # Extract topics from the summary with their timestamps
         topics = extract_topics_from_summary(summary, video_id, transcript_data)
 
-        # If we have transcript data, update the topic timestamps to better match content
+        # If we have transcript data, update the topic timestamps to better match content 
+        # only modifies timestamp_seconds and timestamp
         if transcript_data:
             topics = update_speaker_timestamps_for_topics(topics, transcript_data)
 
@@ -267,6 +304,10 @@ def generate_meeting_summaries_markdown(
         for topic in topics:
             topic["batch_index"] = i
             topic["batch"] = batch
+
+
+        # TODO potentially find 5 candidates based on each batch and topics and then select up to 3 images 
+        # create a dictionary of topics to up to 3 images 
 
         all_topics.extend(topics)
 
@@ -329,12 +370,405 @@ def generate_meeting_summaries_markdown(
         # Add the content for this topic
         md_lines.append(f"{content}\n")
 
+        accumulated_descriptions = []
+
+        key = f"{topic} - {speaker}"
+        if images_to_be_embedded_per_topic and key in images_to_be_embedded_per_topic:
+            md_lines.append("*Images to be embedded*\n")
+            for image in images_to_be_embedded_per_topic[key]:
+                b64 = base64.b64encode(image['bytes']).decode('ascii')
+                md_lines.append(f"![{image['timestamp']}](data:image/jpeg;base64,{b64})")
+                # Add description as bullet point if it exists
+                if 'description' in image:
+                    accumulated_descriptions.append(image['description'])
+
+        if accumulated_descriptions:
+            md_lines.append("*Descriptions*\n")
+            for description in accumulated_descriptions:
+                md_lines.append(f"* {description}")
+        md_lines.append("\n")
+
     # Write the file
     with open(md_file, "w", encoding="utf-8") as f:
         f.write("\n".join(md_lines))
 
     print(f"Generated meeting summaries markdown with verified timestamps: {md_file}")
     return md_file
+
+
+def embed_with_candidate_image_timesteps_batch(batch_entries, batch_number, api_key, generated_batch_summary): 
+    """
+    For each time interval in the generated summaries, generate 5 potential candidate timestamps for images that provide meaningful visual context for the time interval. 
+
+    Args: 
+        batch_entries (list): List of transcript entries for this batch
+        batch_number (int): Batch number for identification
+        api_key (str): OpenAI API key
+        generated_batch_summaries (list): List of batch summaries generated by the summarize_batch function
+
+    Returns:
+        string: a single string of timesteps for images of the format: 
+        **Topic Title - Speaker Name** (H:MM:SS): [timestamps...]\n
+    """ 
+
+    if not api_key:
+        return "API key not provided. Summaries not generated."
+
+    # Extract batch text
+    batch_text = extract_text_for_batch(batch_entries)
+
+    if not batch_text.strip():
+        return "No text available for summarization."
+
+    # Get start and end times
+    start_seconds = min(entry["seconds"] for entry in batch_entries)
+    # End time is either explicit end_seconds or last entry
+    if any("end_seconds" in entry for entry in batch_entries):
+        # Use the max end_seconds if available
+        end_seconds = max(
+            entry.get("end_seconds", entry["seconds"]) for entry in batch_entries
+        )
+    else:
+        # Otherwise use the last entry in the batch
+        end_seconds = max(entry["seconds"] for entry in batch_entries)
+
+    start_time = seconds_to_time_str(start_seconds)
+    end_time = seconds_to_time_str(end_seconds)
+
+    # Create a mapping of speaker names to ALL their timestamps for this batch
+    speaker_timestamps = {}
+    for entry in batch_entries:
+        speaker = entry["name"]
+        if speaker not in speaker_timestamps:
+            speaker_timestamps[speaker] = []
+
+        # Add this timestamp to the list for this speaker
+        speaker_timestamps[speaker].append(
+            {
+                "seconds": entry["seconds"],
+                "time_str": entry["time_str"],
+                "text": entry["text"][:100],  # Include a snippet of text for context
+            }
+        )
+
+    # Prepare the timestamp reference for the model
+    timestamp_reference = "SPEAKER TIMESTAMPS (DO NOT MODIFY THESE):\n"
+    for speaker, timestamps in speaker_timestamps.items():
+        # Sort timestamps chronologically
+        sorted_timestamps = sorted(timestamps, key=lambda x: x["seconds"])
+
+        # Include all timestamps for the speaker with context snippets
+        timestamp_reference += f"{speaker}:\n"
+        for i, ts in enumerate(sorted_timestamps, 1):
+            timestamp_reference += f"  {i}. {ts['time_str']} - '{ts['text']}...'\n"
+
+    try:
+        openai.api_key = api_key
+
+        prompt = (
+            "Given the generated summaries with time intervals, your task is to provide potential timestamps for each topic to take screenshots of a video recording. \n\n"
+            "The screenshots should provide meaningful visual context for the content summaries. For each topic provided in the generated summary, you want to identify 5 potential candidate timestamps. \n\n"
+            "OUTPUT FORMAT REQUIREMENTS (CRITICAL):\n"
+            "1. Each topic must follow this EXACT format:\n"
+            "   **Topic Title - Speaker Name** (H:MM:SS): [timestamps...]\n"
+            "2. The format must be followed precisely with NO exceptions\n"
+            "3. For instance an example of the output is: \n" 
+            "   **Automated Meeting Minutes - John Doe* (3:05:00): [3:00:00, 3:01:00, 3:02:00, 3:03:00, 3:04:00]\n" 
+            "   **Text Autonomy - Jane Smith** (3:10:00): [3:05:10, 3:05:20, 3:05:30, 3:05:40, 3:07:00]\n"
+            "4. The order of topics in the output must match the order of the topics listed in the generated summary (DO NOT REORDER THE TOPICS)\n"
+            "5. Do not include any other text in the output\n"
+            "CANDIDATE TIMESTAMPS SELECTION RULES:\n"
+            "1. Choose 5 potential distinct candidate timestamps for each topic provided in the generated summaries\n"
+            "2. The 5 potential candidate timestamps must be directly relevant to the topic\n" 
+            "3. The candidate timestamps for each topic must be in chronological order and must be in the format of H:MM:SS\n"
+            "4. If possible, the candidate timestamps should correspond to the end of a notable action \n"
+            "5. The candidate timestamps should be chosen to provide meaningful visual context for the content summaries\n"
+            f"SPEAKER TIMESTAMPS (DO NOT MODIFY THESE):\n{timestamp_reference}\n\n"
+            f"MEETING TRANSCRIPT BATCH #{batch_number} ({start_time} - {end_time}):\n\n{batch_text}"
+            f"GENERATED SUMMARY:\n{generated_batch_summary}\n\n"
+        )
+
+        # Using chat completions API
+        response = openai.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a technical meeting summarizer. NEVER modify the timestamps provided to you.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=1000,  # More tokens for batch summaries
+        )
+        image_embedded_timestamps = response.choices[0].message.content.strip()
+
+        return image_embedded_timestamps
+
+    except Exception as e:
+        return f"Error generating image embedded timestamps: {str(e)}"
+    
+
+def evaluate_candidate_image_timesteps_across_all_batches(batch_summaries, image_timestamps, video_id, api_key):
+    """
+    For each time interval in the generated summaries, evaluate the candidate image timestamps and obtain image using video_id and timestamp. 
+    Then use LLM to select up to 3 that provide the best visual context for the time interval. 
+
+    Args: 
+        batch_summaries (list): List of batch summaries generated by the summarize_batch function
+        image_timestamps (list): List of image timestamps generated by the embed_with_candidate_image_timesteps_batch function
+        video_id (str): Panopto video ID
+        api_key (str): OpenAI API key
+
+    Returns:
+        dictionary: mapping each topic in the batch_summaries to an array of at most 3 images as a base64 string 
+        the key to the dictionary is the topic title and speaker name
+    """
+    if not api_key:
+        return "API key not provided. Image evaluation not performed."
+
+    try:
+        openai.api_key = api_key
+        result = {}
+        # key to result is the topic title and speaker name
+
+        # Process each batch 
+        for batch_number, (summary, timestamps) in enumerate(zip(batch_summaries, image_timestamps)):
+            # Extract topics and their timestamps from the summary 
+            topics = extract_topics_from_summary(summary, video_id)
+
+            print(f"Processing Generated Timestamps of {timestamps} correspond to batch {batch_number}")
+
+            # the ith topic of batch_summaries and the ith line of image_timestamps are expected to be aligned and correspond to the same topic and especially the same time interval
+            for topic_idx, topic in enumerate(topics):
+                # --- build your candidate list ---
+                ts_lines = timestamps.split("\n")
+                # index directly into image_timestamps and otherwise iterate over all lines of timestamps
+                line = ts_lines[topic_idx] if topic_idx < len(ts_lines) and topic['topic'] in ts_lines[topic_idx] else None
+                if not line or topic['topic'] not in line:
+                    for ln in ts_lines:
+                        if topic['topic'] in ln:
+                            line = ln
+                            break
+                if not line:
+                    continue
+
+                m = re.search(r"\[(.*?)\]", line)
+                if not m:
+                    continue
+                topic_timestamps = [ts.strip() for ts in m.group(1).split(",")]
+
+                MAX_IMAGE_BYTES = 16384  # ~16 KB
+                THUMBNAIL_SIZE = (128, 128)
+                JPEG_QUALITY = 50
+
+                timestamp_images = []
+                actual_images = []
+                for ts in topic_timestamps:
+                    sec = time_str_to_seconds(ts)
+                    print(f"→ requesting thumbnail for {ts} ({sec}s)")
+
+                    # 1) Redirector URL
+                    # redirect_url = (
+                    #     f"https://mit.hosted.panopto.com/"
+                    #     f"Panopto/Services/FrameGrabber.svc/FrameRedirect"
+                    #     f"?objectId={video_id}"
+                    #     f"&mode=Delivery"
+                    #     f"&time={sec}"
+                    # )
+                    # r = requests.get(redirect_url, allow_redirects=False)
+                    # print(f"  → Status: {r.status_code}")
+
+                    img = screenshot_panopto_as_image(video_id, sec, resize_scale=RESIZE_SCALE) # resize scale factor of 0.5 
+                    # create a copy of the image to store as JPEG bytes 
+                    buf = io.BytesIO()
+                    img.save(buf, format="JPEG", quality=JPEG_QUALITY)
+                    actual_bytes = buf.getvalue()
+                    actual_images.append({ 
+                        "timestamp": ts,
+                        "bytes": actual_bytes
+                    })
+
+                    # convert to thumbnail before passing into LLMs 
+                    img.thumbnail(THUMBNAIL_SIZE)
+
+                    if img.mode != "RGB":
+                        img = img.convert("RGB")
+
+
+                    buf = io.BytesIO()
+                    img.save(buf, format="JPEG", quality=JPEG_QUALITY)
+                    small_bytes = buf.getvalue()
+                    
+
+                    if len(small_bytes) <= MAX_IMAGE_BYTES:
+                        timestamp_images.append({
+                            "timestamp": ts,
+                            "bytes": small_bytes
+                        })
+                    else:
+                        print(f"    ✗ still too big, skipping {ts}")
+
+
+                    # code instead to request the image from Panopto
+
+                    # if r.status_code in (301, 302) and "Location" in r.headers:
+                    #     image_url = r.headers["Location"]
+                    #     print(f"  → Redirects to image URL: {image_url}")
+
+                    #     # 2) Fetch the actual image
+                    #     r2 = requests.get(image_url)
+                    #     print(
+                    #         f"    → final Status: {r2.status_code}, "
+                    #         f"Content-Type: {r2.headers.get('Content-Type')}, "
+                    #         f"bytes: {len(r2.content)}"
+                    #     )
+
+                    #     if r2.status_code == 200 and r2.headers.get("Content-Type", "").startswith("image/"):
+                    #         # 3) Open & downscale
+                    #         img = Image.open(io.BytesIO(r2.content))
+                    #         img.thumbnail(THUMBNAIL_SIZE)
+
+                    #         if img.mode != "RGB":
+                    #             img = img.convert("RGB")
+
+                    #         # 4) Re-encode as JPEG
+                    #         buf = io.BytesIO()
+                    #         img.save(buf, format="JPEG", quality=JPEG_QUALITY)
+                    #         small_bytes = buf.getvalue()
+                    #         print(f"    → thumbnail size: {len(small_bytes)} bytes")
+
+                    #         # 5) Only keep it if <16 KB
+                    #         if len(small_bytes) <= MAX_IMAGE_BYTES:
+                    #             timestamp_images.append({
+                    #                 "timestamp": ts,
+                    #                 "bytes": small_bytes
+                    #             })
+                    #         else:
+                    #             print(f"    ✗ still too big, skipping {ts}")
+                    #     else:
+                    #         print(f"    ✗ Failed to fetch valid image at {ts} (status {r2.status_code})")
+
+                    # else:
+                    #     # Unexpected response from redirector
+                    # print("  ✗ No redirect! Body preview:", r.text[:200].replace("\n", " "))
+
+                # If nothing made it through, skip downstream
+                if not timestamp_images:
+                    continue
+
+                                # Prepare prompt for evaluating timestamps with image data
+                prompt = (
+                    "Given the following meeting summary and candidate timestamps as well as snapshots of the video at the candidate timestamps (named by their timestamp), "
+                    "CRITICAL OUTPUT REQUIREMENTS: \n"
+                    "These are rules that must be followed for the generation of the output:\n"
+                    "1. Return ONLY the timestamps in H:MM:SS format and the description for each image (of the same index) as two separated arrays, separated by commas.\n"
+                    "- Example output: [3:00:00, 3:01:00, 3:02:00], [description for the first image END** description for the second image END** description for the third image END**]\n"
+                    "2. Do not include any other text in the output.\n"
+                    "3. Only return timestamps that are provided as the candidate timestamps list and provide in the exact format of H:MM:SS.\n"
+                    "4. Each description (element of the second array) MUST be elaborate and provide descriptions of each corresponding image. The sentences must be complete\n" 
+                    "5. Each description MUST UTILIZE the full CONTEXT of the content, topic, and speaker which will be provided. It must be around 2-3 sentences each.\n"
+                    "6. Select up to at most 3 timestamps that would provide the best visual context for the content. Consider:\n"
+                        "- when key points are being discussed\n"
+                        "- when visual aids or presentations are shown\n"
+                        "- provide descriptions of the images that are relevant to the content\n"
+                    "6. Return up to three timestamps and have less than three if some timestamps are not relevant to the content and do not provide meaningful visual context.\n"
+                    f"Topic: {topic['topic']}\n"
+                    f"Speaker: {topic['speaker']}\n"
+                    f"Content: {topic['content']}\n"
+                    f"Candidate timestamps: {', '.join(topic_timestamps)}\n\n"
+                    "7. I will send you each candidate image as a separate message and each image is named by its timestamp\n"
+                )
+
+                # 3) Build a multimodal prompt
+                messages = [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a video content analyzer. "
+                            "Choose up to 3 of the candidate timestamps below that "
+                            "provide the best visual context."
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                            "type": "text",
+                            "text": prompt
+                            }
+                        ]
+                    }
+                ]
+
+
+                for img in timestamp_images:
+                    base64_image = base64.b64encode(img["bytes"]).decode('utf-8')
+                    # add text of the name of the image 
+                    messages[1]["content"].append({
+                        "type": "text",
+                        "text": f"The name of the next image will be {img['timestamp']}.jpeg"
+                    })
+                    messages[1]["content"].append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}",
+                            "detail": "high"
+                        }
+                    })
+
+
+                # 5) Ask the model to pick the best 3
+                resp = openai.chat.completions.create(
+                    model=MODEL,
+                    messages=messages,
+                    max_tokens=1000
+                ) 
+
+                # Parse the response which should be in format [ts1, ts2, ts3], [desc1, desc2, desc3]
+                content = resp.choices[0].message.content.strip()
+                
+                # Extract the two arrays using regex
+                timestamp_match = re.search(r'\[(.*?)\]', content)
+                description_match = re.search(r'\[(.*?)\]', content[content.find('],') + 2:])
+                
+                if timestamp_match and description_match:
+                    timestamps_processed = [ts.strip() for ts in timestamp_match.group(1).split(',')]
+                    descriptions_processed = [desc.strip() for desc in description_match.group(1).split('END**')]
+                else:
+                    print(f"Warning: Could not parse response format: {content}")
+                    timestamps_processed = []
+                    descriptions_processed = []
+
+                
+
+                # sort picked in chronological order 
+                sorted_pairs = sorted(zip(timestamps_processed, descriptions_processed), key=lambda x: time_str_to_seconds(x[0]))
+                timestamps_processed, descriptions_processed = zip(*sorted_pairs)
+
+                # 7) Collect back the images for the picked ones
+                result_key = f"{topic['topic']} - {topic['speaker']}"
+                result[result_key] = []
+
+                # place in chronological order 
+                # at most 5 candidates and choose up to 3 
+                for timestamp, description in zip(timestamps_processed, descriptions_processed): 
+                    # append images from actual images
+                    for img in actual_images: 
+                        if img["timestamp"] == timestamp: 
+                            # for the given image with the timestamp, add the description 
+                            img["description"] = description 
+                            result[result_key].append(img)
+                # at most 3 images 
+                if len(result[result_key]) > 3: 
+                    print(f"Warning: {result_key} has more than 3 images")
+                    result[result_key] = result[result_key][:3]
+
+        print(result.keys())
+        return result
+
+    except Exception as e:
+        print(f"Error evaluating image timestamps: {str(e)}")
+        return {}
 
 
 def summarize_batch(batch_entries, batch_number, api_key):
@@ -580,6 +1014,7 @@ def process_xlsx(
 
         # Generate batch summaries
         batch_summaries = []
+        image_timestamps = []
         for i, batch in enumerate(batches, 1):
             # Get start and end times for this batch
             start_seconds = min(entry["seconds"] for entry in batch)
@@ -598,19 +1033,23 @@ def process_xlsx(
 
             # Generate summary
             summary = summarize_batch(batch, i, api_key)
+            image_batch_timestamps = embed_with_candidate_image_timesteps_batch(batch, i, api_key, summary)
             batch_summaries.append(summary)
+            image_timestamps.append(image_batch_timestamps)
 
+        images_to_be_embedded_per_topic = evaluate_candidate_image_timesteps_across_all_batches(batch_summaries, image_timestamps, video_id, api_key)
+        
         # Generate meeting summaries HTML with topic-level clickable links
         # Pass transcript_data for improved timestamp matching
         generate_meeting_summaries_html(
-            batches, batch_summaries, video_id, summary_file, transcript_data
+            batches, batch_summaries, video_id, summary_file, transcript_data, images_to_be_embedded_per_topic
         )
         print(f"Generated meeting summaries HTML: {summary_file}")
 
         # Generate meeting summaries Markdown with topic-level clickable links
         # Pass transcript_data for improved timestamp matching
         generate_meeting_summaries_markdown(
-            batches, batch_summaries, video_id, meeting_summary_md_file, transcript_data
+            batches, batch_summaries, video_id, meeting_summary_md_file, transcript_data, images_to_be_embedded_per_topic
         )
         print(f"Generated meeting summaries Markdown: {meeting_summary_md_file}")
 

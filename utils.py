@@ -531,3 +531,114 @@ def get_api_key():
                 print(f"Error saving API key: {e}")
     
     return api_key
+
+## Utilities for Panopto video screenshotting
+
+
+from typing import Union, Optional
+from PIL import Image
+from playwright.sync_api import sync_playwright
+import io, time
+
+def screenshot_panopto_as_image(
+    video_id: str, 
+    start_sec: int,
+    timeout_sec: int = 30,
+    max_retries: int = 3,
+    viewport_size: dict = {"width": 1920, "height": 1080},
+    headless: bool = True,
+    resize_scale: float = 0.5
+) -> Optional[Union[bytes, Image.Image]]:
+    """
+    Spin up a headless browser, go to the Panopto Viewer, wait for the network
+    to quiet down and the UI to render, then snapshot the whole page.
+    """
+    url = (
+        f"https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx"
+        f"?id={video_id}&start={start_sec}"
+    )
+
+    for attempt in range(1, max_retries+1):
+        try:
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(
+                    # headless=headless,
+                    channel="chrome",
+                    headless=headless,
+                    args=["--no-sandbox","--disable-gpu", "--disable-blink-features=AutomationControlled",]
+                )
+
+                # Create a context with the desired viewport
+                context = browser.new_context(viewport=viewport_size)
+                page = context.new_page()                
+                page.set_default_timeout(timeout_sec * 1000)
+                page.add_init_script(
+                    "Object.defineProperty(navigator, 'webdriver', {get:() => undefined});"
+                )
+
+                # Navigate to the video page
+                page.goto(url, wait_until="domcontentloaded")
+                page.wait_for_load_state("networkidle")
+
+                page.wait_for_function("""
+                () => {
+                    const v = document.getElementById('secondaryVideo');
+                    return v && v.readyState >= 3;
+                }
+                """, timeout=timeout_sec * 1000)
+
+                # press play button
+                page.wait_for_selector('#playButton', timeout=timeout_sec * 1000)
+                page.click('#playButton')
+                
+                # Wait for video element to be available
+                page.wait_for_selector("video#primaryVideo", state="attached", timeout=timeout_sec * 1000)
+                page.wait_for_selector("video#secondaryVideo", state="attached", timeout=timeout_sec * 1000)
+
+                # Wait for video to be ready and seek to exact timestamp
+                page.wait_for_function("""
+                    async (targetTime) => {
+                        const video = document.getElementById('secondaryVideo');
+                        if (!video) return false;
+                        
+                        // Wait for video to be ready
+                        if (video.readyState < 3) return false;
+                        
+                        // Seek to exact timestamp
+                        video.currentTime = targetTime;
+                        await new Promise(r => setTimeout(r, 100)); // Small delay to ensure seek completes
+                        video.play() 
+                        video.pause()                
+                        // Verify we're at the correct timestamp
+                        return Math.abs(video.currentTime - targetTime) < 0.1;
+                    }
+                """, arg=start_sec, timeout=timeout_sec * 1000)
+
+                # Take screenshot immediately after seeking
+                png_bytes = page.screenshot(full_page=True)
+                browser.close()
+
+                img = Image.open(io.BytesIO(png_bytes))
+                img = img.resize((int(img.width * resize_scale), int(img.height * resize_scale)))
+                return img
+
+        except Exception as e:
+            print(f"Attempt {attempt} failed: {e}")
+            if attempt == max_retries:
+                return None
+            # exponential backoff
+            time.sleep(2 ** attempt)
+
+    return None
+
+
+
+if __name__ == "__main__":
+    # test link is https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=fb0e4313-e23f-4bad-ac1b-b2df000331b2&start=1000 
+    # and seconds to test is 200 and 1000 
+    seconds_to_test = [100, 1000]
+    for seconds in seconds_to_test:
+        image = screenshot_panopto_as_image("fb0e4313-e23f-4bad-ac1b-b2df000331b2", seconds)
+        # save image to file
+        image.save(f"test_screenshot_{seconds}.png")
+        print(f"Saved test_screenshot_{seconds}.png")

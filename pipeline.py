@@ -242,6 +242,9 @@ def run_pipeline(input_file, video_id=None, skip_refinement=False, html_format="
         sys.exit(1)
     
     # Step 3: Run refineStartTimes if not skipped
+    # for each entry that has a topic and topic text 
+    # find the most well-matching entry corresponding to that topic with the same speaker 
+    # and mark the entry in refineStartTimes
     refined_xlsx_file = xlsx_file
     if not skip_refinement:
         logger.info("Step 3: Refining start times...")
