@@ -1,0 +1,18 @@
+[
+  {
+    "summary": "Collaboration between KSadhika and test",
+    "description": "KSadhika task: debug Google Calendar OAuth bug by 5/12\ntest task: update RSVP polling logic in `send_payloads.py`and collobrate with KSadhika\n\nGPT rationale: Yes, they should coordinate. Although their tasks are different, Person B is supposed to collaborate with Person A. This means they need to work together, which will require coordination to ensure they are aligned and their tasks are completed effectively.",
+    "attendees": [
+      {
+        "email": "sadhikakamchetty6@gmail.com"
+      },
+      {
+        "email": "chegga903@gmail.com"
+      }
+    ],
+    "preferred_time_range": {
+      "start": "2025-05-13T13:00:33.723894Z",
+      "end": "2025-05-13T18:00:33.723923Z"
+    }
+  }
+]
