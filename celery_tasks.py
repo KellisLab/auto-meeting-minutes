@@ -314,7 +314,7 @@ def process_single_meeting(meeting_url, meeting_name, meeting_date=None):
             # Try to get better meeting name
             try:
                 new_meeting_name = extract_meeting_name_from_url(meeting_url)
-            except:
+            except Exception:
                 new_meeting_name = f"Meeting {video_id[:8]}"
             
             if not new_meeting_name or new_meeting_name == "None":
