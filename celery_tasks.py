@@ -295,7 +295,7 @@ def extract_meeting_date(meeting_name):
 
 
 def process_single_meeting(meeting_url, meeting_name, meeting_date=None):
-    """Process a single meeting using the full pipeline from DELETE THIS folder."""
+    """Process a single meeting using the full pipeline."""
     # Load meeting-notes modules dynamically
     meeting_notes_modules = load_meeting_notes_modules()
     
