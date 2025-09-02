@@ -57,12 +57,13 @@ pip install -r requirements.txt
 python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords'); nltk.download('punkt_tab')"
 ```
 
-5. **Create a .env file with your OpenAI API key**
+5. **Create a .env file with your configuration**
 
 ```bash
-echo "API_KEY=your_openai_key_here" > .env
-echo "GPT_MODEL=gpt-4o" >> .env
-echo "MEETING_ROOT_DIR=/path/to/output/directory" >> .env
+echo "DJANGO_SECRET_KEY=your-secret-key-here" > .env
+echo "DJANGO_DEBUG=True" >> .env
+echo "DATABASE_URL=postgresql://username:password@host:port/database" >> .env
+echo "PANOPTO_FOLDER_ID=your-panopto-folder-id" >> .env
 ```
 
 #### Windows
@@ -95,13 +96,14 @@ pip install -r requirements.txt
 python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords'); nltk.download('punkt_tab')"
 ```
 
-5. **Create a .env file with your OpenAI API key (using PowerShell)**
+5. **Create a .env file with your configuration (using PowerShell)**
 
 ```powershell
-# Create .env file with API key and model selection
-"API_KEY = ""your_openai_api_key_here""" | Out-File -FilePath .env
-"GPT_MODEL = ""gpt-4o""" | Add-Content -Path .env
-"MEETING_ROOT_DIR = C:\path\to\output\directory" | Add-Content -Path .env
+# Create .env file with Django and database configuration
+"DJANGO_SECRET_KEY = ""your-secret-key-here""" | Out-File -FilePath .env
+"DJANGO_DEBUG = True" | Add-Content -Path .env
+"DATABASE_URL = ""postgresql://username:password@host:port/database""" | Add-Content -Path .env
+"PANOPTO_FOLDER_ID = ""your-panopto-folder-id""" | Add-Content -Path .env
 ```
 
 6. **Run the application**
@@ -253,9 +255,18 @@ Various parameters can be adjusted:
 Create a `.env` file in the project directory to configure:
 
 ```
-API_KEY=your_openai_key_here
-GPT_MODEL=gpt-4o
-MEETING_ROOT_DIR=/path/to/output/directory
+# Django Configuration
+DJANGO_SECRET_KEY=your-secret-key-here
+DJANGO_DEBUG=True
+
+# Database Configuration
+DATABASE_URL=postgresql://username:password@host:port/database
+
+# Panopto Configuration
+PANOPTO_FOLDER_ID=your-panopto-folder-id
+
+# Celery Configuration (optional)
+CELERY_BROKER_URL=redis://localhost:6379/0
 ```
 
 ## Troubleshooting
