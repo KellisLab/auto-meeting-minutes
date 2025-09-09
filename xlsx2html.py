@@ -293,8 +293,9 @@ Each topic must be a single line in this exact pattern:
 **Topic Title - Speaker Name** (H:MM:SS): Content...
 
 Formatting rules:
--- Do NOT include speaker names.
-- Use only exact timestamps from the SPEAKER TIMESTAMPS section.
+- MUST include speaker names in the format: **Topic Title - Speaker Name** (H:MM:SS): Content...
+- Use only exact timestamps from the SPEAKER TIMESTAMPS section
+
 - Bold important terms with <b>...</b>.
 - Content must be a single paragraph (no bullets, no line breaks).
 - Do NOT add a concluding summary.
@@ -486,7 +487,7 @@ def generate_meeting_summaries_html(
             )
 
             html_content += f'<a href="{topic_link}" class="topic-link">'
-            html_content += f'{topic} <span style="color: #1155cc;">({corrected_timestamp})</span></a>'
+            html_content += f'{topic} - {speaker} <span style="color: #1155cc;">({corrected_timestamp})</span></a>'
         else:
             # Fallback: Find the entry for this speaker in the batch
             names = re.split(r'\s*&\s*|,\s*| and ', speaker)
