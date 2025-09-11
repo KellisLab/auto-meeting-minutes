@@ -1,1 +1,0 @@
-# Mantis4Mantis Django app
