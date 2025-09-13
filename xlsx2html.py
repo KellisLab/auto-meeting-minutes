@@ -419,7 +419,6 @@ def summarize_batch(batch_entries, batch_number, api_key):
             timestamp_reference += f"  {i}. {ts['time_str']} - '{ts['text']}...'\n"
 
     try:
-        openai.api_key = api_key
 
         prompt = (
             f"""You are producing a structured summary of a meeting transcript batch.

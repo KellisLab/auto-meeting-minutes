@@ -676,6 +676,10 @@ def main():
     url = args.url
     if not url:
         url = input("Enter Panopto video URL: ")
+    if len(sys.argv) < 2:
+        print("❌ Error: Panopto URL not provided.")
+        sys.exit(1)
+        panopto_url = sys.argv[1]
     
     run_pipeline_from_url(
         url,
