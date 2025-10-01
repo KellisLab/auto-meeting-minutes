@@ -132,22 +132,83 @@ def detect_speaker_topics(data):
     
     return speaker_topics
 
+def parse_bracket_format(content):
+    """
+    Parse transcript in bracket format: [Speaker] HH:MM:SS followed by text
+    
+    Args:
+        content (str): The transcript content
+        
+    Returns:
+        list: List of (time_str, speaker, text) tuples
+    """
+    matches = []
+    lines = content.strip().split('\n')
+    
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        
+        # Look for speaker and timestamp pattern: [Speaker] HH:MM:SS
+        speaker_time_match = re.match(r'\[([^\]]+)\]\s*(\d{1,2}:\d{2}:\d{2})', line)
+        
+        if speaker_time_match:
+            speaker = speaker_time_match.group(1).strip()
+            time_str = speaker_time_match.group(2)
+            
+            # Collect text from subsequent lines until next speaker/timestamp
+            text_lines = []
+            i += 1
+            
+            while i < len(lines):
+                next_line = lines[i].strip()
+                
+                # Check if this is another speaker/timestamp line
+                if re.match(r'\[([^\]]+)\]\s*(\d{1,2}:\d{2}:\d{2})', next_line):
+                    break
+                
+                # Add non-empty lines to text
+                if next_line:
+                    text_lines.append(next_line)
+                
+                i += 1
+            
+            # Combine text lines
+            if text_lines:
+                text = ' '.join(text_lines)
+                matches.append((time_str, speaker, text))
+        else:
+            i += 1
+    
+    return matches
+
 def txt_to_xlsx(input_file, output_file):
     """
     Convert meeting transcript to Excel format.
     
-    The function expects a transcript in the format:
-    00:00:00 Speaker Name: Text
+    The function handles multiple formats:
+    1. Original format: 00:00:00 Speaker Name: Text
+    2. Bracket format: [Speaker Name] HH:MM:SS\nText
     """
-    # Regular expression to match timestamp, speaker, and text
-    pattern = r'(\d{2}:\d{2}:\d{2}) ([^:]+): (.+)'
     
     # Read the transcript file
     with open(input_file, 'r', encoding='utf-8') as f:
         content = f.read()
     
-    # Extract data using regex
-    matches = re.findall(pattern, content)
+    # Try original format first
+    original_pattern = r'(\d{2}:\d{2}:\d{2}) ([^:]+): (.+)'
+    matches = re.findall(original_pattern, content)
+    
+    # If no matches with original format, try bracket format
+    if not matches:
+        print("Original format not detected, trying bracket format...")
+        matches = parse_bracket_format(content)
+        print(f"Found {len(matches)} entries in bracket format")
+    else:
+        print(f"Found {len(matches)} entries in original format")
+    
+    if not matches:
+        raise ValueError("No valid transcript entries found. Please check the file format.")
     
     # Prepare data for DataFrame
     data = []

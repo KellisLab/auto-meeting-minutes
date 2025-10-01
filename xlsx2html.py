@@ -429,6 +429,7 @@ def summarize_batch(batch_entries, batch_number, api_key):
             - If the earliest content is simple, title it: "Introductions & Setup".
             - Never invent or modify timestamps. Use only those in SPEAKER TIMESTAMPS.
             - Obey the exact output format and paragraph-only content rule.
+            - It should be on third person, never first or second person.
             "OUTPUT FORMAT REQUIREMENTS (CRITICAL):\n"
             "1. Each topic must follow this EXACT format:\n"
             "   **Topic Title - Speaker Name** (H:MM:SS): Content...\n"
