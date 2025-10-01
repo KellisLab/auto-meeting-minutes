@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
 """
-fullpipeline.py - Complete transcript processing pipeline starting from a URL
+fullpipeline.py - Complete transcript processing pipeline starting from a URL or TXT file
 
 This script integrates all components of the transcript processing pipeline:
-1. url2id.py - Extract Panopto video ID from URL
-2. url2meeting_name.py - Extract meeting name from URL for meaningful file names
-3. url2file.py - Download transcript in SRT format
-4. vtt2txt.py - Convert transcript to plain text with timestamps
+1. url2id.py - Extract Panopto video ID from URL (if URL input)
+2. url2meeting_name.py - Extract meeting name from URL for meaningful file names (if URL input)
+3. url2file.py - Download transcript in SRT format (if URL input)
+4. vtt2txt.py - Convert transcript to plain text with timestamps (if URL/SRT input)
 5. txt2xlsx.py - Convert text to Excel format with formatting
 6. refineStartTimes.py - Improve timestamp matching for speakers with multiple appearances
 7. xlsx2html.py - Convert Excel to HTML with links and summaries
 8. html_bold_converter.py - Convert markdown-style bold formatting to HTML bold tags
 
 Usage:
-    python fullpipeline.py [url] [--skip-refinement] [--language LANGUAGE] [--meeting-root DIRECTORY]
-    [--skip-timestamps] [--skip-bold-conversion] [--enhanced-summaries]
+    python fullpipeline.py [url_or_txt_file] [--skip-refinement] [--language LANGUAGE] [--meeting-root DIRECTORY]
+    [--skip-timestamps] [--skip-bold-conversion] [--enhanced-summaries] [--input-type {url,txt}]
 
-Example:
+Examples:
     python fullpipeline.py https://mit.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=ef5959d0-da5f-4ac0-a1ad-b2aa001320a0 --meeting-root /data/meetings --enhanced-summaries
+    python fullpipeline.py meeting_transcript.txt --input-type txt --meeting-root /data/meetings --enhanced-summaries
 """
 
 import os
@@ -104,28 +105,6 @@ def fix_compound_words(text):
         str: Fixed text
     """
     return text
-    # # Pattern to match "word - word" (a word, followed by space-hyphen-space, followed by another word)
-    # pattern = r'\b([a-zA-Z]+)\s+-\s+([a-zA-Z]+)\b'
-    
-    # def replace_match(match):
-    #     word1 = match.group(1).lower()
-    #     word2 = match.group(2).lower()
-        
-    #     # Common prefixes and short words that are likely parts of compound words
-    #     common_prefixes = {'self', 'post', 'pre', 'non', 'anti', 'co', 'counter', 'cross', 
-    #                      'cyber', 'meta', 'multi', 'over', 'pseudo', 'quasi', 'semi', 
-    #                      'sub', 'super', 'trans', 'ultra', 'under', 'vice', 'inter', 
-    #                      'intra', 'micro', 'mid', 'mini', 'pro', 're', 'buy'}
-        
-    #     # Keep original capitalization while joining with hyphen
-    #     if (len(word1) <= 4 or word1 in common_prefixes):
-    #         return match.group(1) + '-' + match.group(2)
-        
-    #     # Not a compound word, keep as is
-    #     return match.group(0)
-    
-    # # Apply the replacement
-    # return re.sub(pattern, replace_match, text)
 
 def extract_date_from_name(name):
     """
@@ -359,6 +338,268 @@ def set_timestamps_for_directory(directory, timestamp):
         success_count += 1
     
     return success_count, total_count
+
+def detect_input_type(input_path):
+    """
+    Detect whether the input is a URL or a file path.
+    
+    Args:
+        input_path (str): Input string to analyze
+        
+    Returns:
+        str: 'url' if it's a URL, 'txt' if it's a text file, 'unknown' otherwise
+    """
+    # Check if it's a URL
+    if input_path.startswith(('http://', 'https://')):
+        return 'url'
+    
+    # Check if it's a file path and exists
+    if os.path.exists(input_path):
+        # Check if it's a text file
+        if input_path.lower().endswith('.txt'):
+            return 'txt'
+    
+    return 'unknown'
+
+def run_pipeline_from_txt(txt_file_path, skip_refinement=False, language="English_USA", 
+                         meeting_root=None, skip_timestamps=False, skip_bold_conversion=False,
+                         use_enhanced_summaries=True):
+    """Run the transcript processing pipeline starting from a TXT file"""
+    
+    # Use meeting_root from environment variable if not specified
+    if meeting_root is None:
+        meeting_root = os.getenv('MEETING_ROOT_DIR', 'meetings')
+    
+    # Create meeting root directory if it doesn't exist
+    if not os.path.exists(meeting_root):
+        print(f"Creating meeting root directory: {meeting_root}")
+        os.makedirs(meeting_root, exist_ok=True)
+    
+    # Get the directory where this script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Validate input file
+    if not os.path.exists(txt_file_path):
+        print(f"Error: Input file does not exist: {txt_file_path}")
+        sys.exit(1)
+    
+    # Extract base filename (without extension) for naming
+    base_name = os.path.splitext(os.path.basename(txt_file_path))[0]
+    file_prefix = sanitize_filename(base_name)
+    meeting_folder_name = file_prefix
+    
+    print(f"Processing TXT file: {txt_file_path}")
+    print(f"Using file prefix: {file_prefix}")
+    
+    # Create meeting-specific directory in the meeting root with unique name to prevent overwriting
+    meeting_folder_name = get_unique_directory_name(meeting_root, meeting_folder_name)
+    meeting_dir = os.path.join(meeting_root, meeting_folder_name)
+    meeting_dir_abs = os.path.abspath(meeting_dir)
+    print(f"Creating meeting directory: {meeting_dir}")
+    os.makedirs(meeting_dir, exist_ok=True)
+    
+    # Copy the input TXT file to the meeting directory
+    txt_file = os.path.join(meeting_dir, f"{file_prefix}.txt")
+    print(f"Copying TXT file to meeting directory: {txt_file}")
+    shutil.copy2(txt_file_path, txt_file)
+    
+    # Step 1: Convert TXT to XLSX
+    print("Step 1: Converting TXT to XLSX...")
+    txt2xlsx_path = os.path.join(script_dir, "txt2xlsx.py")
+    xlsx_file = os.path.join(meeting_dir, f"{file_prefix}.xlsx")
+    
+    try:
+        txt2xlsx = import_module_from_file("txt2xlsx", txt2xlsx_path)
+        xlsx_file = txt2xlsx.txt_to_xlsx(txt_file, xlsx_file)
+        print(f"TXT converted to XLSX: {xlsx_file}")
+    except Exception as e:
+        print(f"Error in TXT to XLSX conversion: {e}")
+        sys.exit(1)
+    
+    # Step 2: Run refineStartTimes if not skipped
+    refined_xlsx_file = xlsx_file
+    if not skip_refinement:
+        print("Step 2: Refining start times...")
+        refinement_path = os.path.join(script_dir, "refineStartTimes.py")
+        
+        if os.path.exists(refinement_path):
+            try:
+                # Import and run the refinement module
+                refine_start_times = import_module_from_file("refineStartTimes", refinement_path)
+                
+                # Create a refined version of the Excel file
+                refined_xlsx_file = os.path.join(meeting_dir, f"{file_prefix}_refined.xlsx")
+                refined_xlsx_file = refine_start_times.refine_start_times(xlsx_file, refined_xlsx_file)
+                
+                print(f"Start times refined and saved to: {refined_xlsx_file}")
+            except Exception as e:
+                print(f"Error in start time refinement: {e}")
+                print("Continuing with pipeline using original Excel file...")
+                refined_xlsx_file = xlsx_file
+        else:
+            print("Note: refineStartTimes.py not found. Skipping refinement step.")
+    else:
+        print("Step 2: Refining start times... (Skipped)")
+    
+    # Step 3: Convert XLSX to HTML with summaries
+    print("Step 3: Generating HTML with summaries...")
+    xlsx2html_path = os.path.join(script_dir, "xlsx2html.py")
+    html_file = os.path.join(meeting_dir, f"{file_prefix}_speaker_summaries.html")
+    summary_file = os.path.join(meeting_dir, f"{file_prefix}_meeting_summaries.html")
+    speaker_summary_file = os.path.join(meeting_dir, f"{file_prefix}_speaker_summaries.md")
+    meeting_summary_md_file = os.path.join(meeting_dir, f"{file_prefix}_meeting_summaries.md")
+    
+    try:
+        xlsx2html = import_module_from_file("xlsx2html", xlsx2html_path)
+        
+        # Check if enhanced summaries are available
+        use_enhanced = True
+        if use_enhanced_summaries:
+            print("Using enhanced speaker summaries with multiple topics...")
+        
+        # Process the refined Excel file (using a placeholder video_id since we don't have one)
+        video_id = f"txt_input_{int(time.time())}"  # Generate a unique ID
+        result_files = xlsx2html.process_xlsx(
+            refined_xlsx_file,
+            video_id,
+            html_file,
+            speaker_summary_file,
+            meeting_summary_md_file,
+            use_enhanced_summaries=use_enhanced
+        )
+        
+        # Unpack result files, using the original names as fallback
+        if result_files and len(result_files) == 4:
+            html_file, summary_file, speaker_summary_file, meeting_summary_md_file = result_files
+        
+        # Apply compound word fix to all summary files
+        try:
+            # Fix HTML files
+            if os.path.exists(html_file):
+                with open(html_file, 'r', encoding='utf-8') as f:
+                    html_content = f.read()
+                html_content = fix_compound_words(html_content)
+                with open(html_file, 'w', encoding='utf-8') as f:
+                    f.write(html_content)
+            
+            if os.path.exists(summary_file):
+                with open(summary_file, 'r', encoding='utf-8') as f:
+                    summary_content = f.read()
+                summary_content = fix_compound_words(summary_content)
+                with open(summary_file, 'w', encoding='utf-8') as f:
+                    f.write(summary_content)
+            
+            # Fix markdown files
+            if os.path.exists(speaker_summary_file):
+                with open(speaker_summary_file, 'r', encoding='utf-8') as f:
+                    md_content = f.read()
+                md_content = fix_compound_words(md_content)
+                with open(speaker_summary_file, 'w', encoding='utf-8') as f:
+                    f.write(md_content)
+            
+            if os.path.exists(meeting_summary_md_file):
+                with open(meeting_summary_md_file, 'r', encoding='utf-8') as f:
+                    md_content = f.read()
+                md_content = fix_compound_words(md_content)
+                with open(meeting_summary_md_file, 'w', encoding='utf-8') as f:
+                    f.write(md_content)
+                    
+            print("Applied compound word fixes to all summary files")
+        except Exception as e:
+            print(f"Warning: Error applying compound word fixes: {e}")
+        
+        if os.path.exists(html_file) and os.path.exists(summary_file):
+            print("\nHTML generation completed successfully!")
+            print(f"Files saved to: {meeting_dir}")
+            print(f"Speaker links HTML: {html_file}")
+            print(f"Speaker summary Markdown: {speaker_summary_file}")
+            print(f"Meeting summaries HTML: {summary_file}")
+            print(f"Meeting summaries Markdown: {meeting_summary_md_file}")
+        else:
+            print("Warning: HTML conversion completed but output files may be missing.")
+    except Exception as e:
+        print(f"Error in XLSX to HTML conversion: {e}")
+        sys.exit(1)
+    
+    # Step 4: Optionally convert markdown-style bold formatting to HTML bold tags
+    if not skip_bold_conversion:
+        try:
+            html_bold_converter_path = os.path.join(script_dir, "html_bold_converter.py")
+            if os.path.exists(html_bold_converter_path):
+                print("Step 4: Converting markdown-style bold formatting to HTML bold tags...")
+                
+                # Import and run the HTML bold converter module
+                html_bold_converter = import_module_from_file("html_bold_converter", html_bold_converter_path)
+                
+                # Process the HTML summary files
+                if os.path.exists(summary_file):
+                    html_bold_converter.process_html_file(summary_file)
+                    print(f"Converted bold formatting in meeting summaries HTML: {summary_file}")
+                
+                if os.path.exists(html_file):
+                    html_bold_converter.process_html_file(html_file)
+                    print(f"Converted bold formatting in speaker summaries HTML: {html_file}")
+                
+                # Process the markdown summary files
+                if os.path.exists(meeting_summary_md_file):
+                    html_bold_converter.process_md_file(meeting_summary_md_file)
+                    print(f"Converted bold formatting in meeting summaries Markdown: {meeting_summary_md_file}")
+                
+                if os.path.exists(speaker_summary_file):
+                    html_bold_converter.process_md_file(speaker_summary_file)
+                    print(f"Converted bold formatting in speaker summaries Markdown: {speaker_summary_file}")
+                
+            else:
+                print("Step 4: Converting bold formatting... (Skipped - converter script not found)")
+        except Exception as e:
+            print(f"Warning: Error in bold formatting conversion: {e}")
+            print("Original summaries are still available.")
+    else:
+        print("Step 4: Converting bold formatting... (Skipped)")
+    
+    # Step 5: Set file and directory timestamps based on meeting date
+    if not skip_timestamps:
+        print("Step 5: Setting file and directory timestamps...")
+        
+        # Extract meeting date from folder name or original filename
+        meeting_folder_name = re.sub(r'[\\/*?:"<>|]', '_', meeting_folder_name)
+        meeting_timestamp = extract_date_from_name(meeting_folder_name)
+        
+        if not meeting_timestamp:
+            # Try extracting from original filename
+            original_base = os.path.splitext(os.path.basename(txt_file_path))[0]
+            meeting_timestamp = extract_date_from_name(original_base)
+        
+        if meeting_timestamp:
+            # Convert timestamp to readable date for display
+            date_str = datetime.datetime.fromtimestamp(meeting_timestamp).strftime('%Y-%m-%d %H:%M:%S')
+            print(f"Extracted meeting date: {date_str}")
+            
+            # Set timestamps for all files and directories
+            success_count, total_count = set_timestamps_for_directory(meeting_dir, meeting_timestamp)
+            
+            if success_count == total_count:
+                print(f"Successfully set timestamps for all {total_count} files and directories")
+            else:
+                print(f"Set timestamps for {success_count} out of {total_count} files and directories")
+        else:
+            print("Warning: Could not extract date from filename, keeping original file timestamps")
+    else:
+        print("Step 5: Setting file and directory timestamps... (Skipped)")
+    
+    return {
+        "video_id": video_id,
+        "meeting_name": base_name,
+        "file_prefix": file_prefix,
+        "meeting_dir": meeting_dir,
+        "txt_file": txt_file,
+        "xlsx_file": xlsx_file,
+        "refined_xlsx_file": refined_xlsx_file if not skip_refinement else None,
+        "html_file": html_file,
+        "summary_file": summary_file,
+        "speaker_summary_file": speaker_summary_file,
+        "meeting_summary_md_file": meeting_summary_md_file
+    }
 
 def run_pipeline_from_url(url, skip_refinement=False, language="English_USA", 
                          meeting_root=None, skip_timestamps=False, skip_bold_conversion=False,
@@ -654,9 +895,11 @@ def run_pipeline_from_url(url, skip_refinement=False, language="English_USA",
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Process video transcripts from URL through the complete pipeline'
+        description='Process video transcripts from URL or TXT file through the complete pipeline'
     )
-    parser.add_argument('url', nargs='?', help='Panopto video URL')
+    parser.add_argument('input', nargs='?', help='Panopto video URL or path to TXT file')
+    parser.add_argument('--input-type', choices=['url', 'txt', 'auto'], default='auto',
+                      help='Specify input type (default: auto-detect)')
     parser.add_argument('--skip-refinement', action='store_true', 
                       help='Skip the start time refinement step')
     parser.add_argument('--language', default='English_USA',
@@ -672,20 +915,46 @@ def main():
     
     args = parser.parse_args()
     
-    # Get URL from command line or prompt user
-    url = args.url
-    if not url:
-        url = input("Enter Panopto video URL: ")
+    # Get input from command line or prompt user
+    input_path = args.input
+    if not input_path:
+        input_path = input("Enter Panopto video URL or path to TXT file: ")
     
-    run_pipeline_from_url(
-        url,
-        args.skip_refinement,
-        args.language,
-        args.meeting_root,
-        args.skip_timestamps,
-        args.skip_bold_conversion,
-        args.enhanced_summaries
-    )
+    # Determine input type
+    input_type = args.input_type
+    if input_type == 'auto':
+        input_type = detect_input_type(input_path)
+        if input_type == 'unknown':
+            print(f"Error: Could not determine input type for: {input_path}")
+            print("Please specify --input-type url or --input-type txt")
+            sys.exit(1)
+    
+    print(f"Detected input type: {input_type}")
+    
+    # Run appropriate pipeline based on input type
+    if input_type == 'url':
+        run_pipeline_from_url(
+            input_path,
+            args.skip_refinement,
+            args.language,
+            args.meeting_root,
+            args.skip_timestamps,
+            args.skip_bold_conversion,
+            args.enhanced_summaries
+        )
+    elif input_type == 'txt':
+        run_pipeline_from_txt(
+            input_path,
+            args.skip_refinement,
+            args.language,
+            args.meeting_root,
+            args.skip_timestamps,
+            args.skip_bold_conversion,
+            args.enhanced_summaries
+        )
+    else:
+        print(f"Error: Unsupported input type: {input_type}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
