@@ -63,7 +63,7 @@ load_dotenv()
 # Access the API key
 OPENAI_API_KEY = os.getenv("API_KEY")
 MODEL = os.getenv("GPT_MODEL", "gpt-4o")
-# Default batch size for meeting summaries (in minutes)
+# Default batch size for meeting summaries (in minutes) 
 DEFAULT_BATCH_SIZE_MINUTES = 40
 ENHANCED_SUMMARIES_AVAILABLE = True
 
@@ -420,16 +420,34 @@ def summarize_batch(batch_entries, batch_number, api_key):
 
     try:
         openai.api_key = api_key
-
+         # Determine if this is the first batch (meeting start)
+        is_first_batch = batch_number == 1
+        
+        # Adjust guardrails based on batch position
+        if is_first_batch:
+            batch_context = """NON-NEGOTIABLE GUARDRAILS FOR FIRST BATCH:
+           - This is the beginning of the meeting. Start from the earliest timestamp.
+           - If the earliest content is simple (greetings, technical setup), title it: "Introductions & Setup".
+           - If the earliest content is substantive, title it based on the content (e.g., "Project Kickoff", "Budget Discussion").
+           - NEVER claim the meeting began late or at a later timestamp."""
+        else:
+            batch_context = f"""NON-NEGOTIABLE GUARDRAILS FOR CONTINUATION BATCH:
+           - This is batch #{batch_number} of an ongoing meeting (timespan: {start_time} - {end_time}).
+           - Start summarizing from the earliest timestamp in THIS batch ({start_time}).
+           - Do NOT create "Introductions & Setup" topics - the meeting has already started.
+           - Do NOT write phrases suggesting the meeting is beginning.
+           - Begin directly with the substantive topics being discussed in this time segment."""
         prompt = (
-            f"""You are producing a structured summary of a meeting transcript batch.
-            NON-NEGOTIABLE GUARDRAILS:
-            - You MUST begin transcripting with the first minute **even if it is lightweight** (greetings, agenda, setup).
-            - The **FIRST output line MUST use the earliest timestamp in this batch window**
-            - If the earliest content is simple, title it: "Introductions & Setup".
+
+           f"""You are producing a structured summary of a meeting transcript batch.
+            {batch_context}
+            
+             UNIVERSAL RULES (ALL BATCHES):
             - Never invent or modify timestamps. Use only those in SPEAKER TIMESTAMPS.
             - Obey the exact output format and paragraph-only content rule.
-            - It should be on third person, never first or second person.
+            - Use third person voice, never first or second person.
+            - Do NOT write phrases like "the meeting began at..." or "set up in the middle of the meeting".
+            -
             "OUTPUT FORMAT REQUIREMENTS (CRITICAL):\n"
             "1. Each topic must follow this EXACT format:\n"
             "   **Topic Title - Speaker Name** (H:MM:SS): Content...\n"
@@ -447,7 +465,7 @@ def summarize_batch(batch_entries, batch_number, api_key):
             "3. Be detailed and comprehensive\n"
             "4. Do not hallucinate information\n"
             "5. Do not include a concluding summary paragraph\n\n"
-            "6. Each paragraph must be of 5 minute conversation minimum\n"
+            "6. Each paragraph must be of 5 minute conversation\n"
             "7.For Speaker names write two speaker names that was most involved in the topic\n\n"
             f"{timestamp_reference}\n\n"
             f"MEETING TRANSCRIPT BATCH #{batch_number} ({start_time} - {end_time}):\n\n{batch_text}"
