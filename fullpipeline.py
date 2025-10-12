@@ -952,6 +952,10 @@ def main():
             args.skip_bold_conversion,
             args.enhanced_summaries
         )
+    elif input_type.endswith((".mp3", ".mp4", ".wav")):
+        print("Error: Audio/video file input is not supported in this pipeline. Please provide a URL or TXT file.")
+        sys.exit(1) #Just a placeholder 
+
     else:
         print(f"Error: Unsupported input type: {input_type}")
         sys.exit(1)
