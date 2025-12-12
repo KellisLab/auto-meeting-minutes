@@ -64,6 +64,54 @@ def parse_timestamp(timestamp_str):
     
     return total_seconds, f"{formatted_hours:02d}:{formatted_minutes:02d}:{formatted_seconds:02d}"
 
+def parse_original_format(remaining_text, formatted_time):
+    '''
+        Returning with format : HH:MM:SS SPEAKER: text
+    '''
+    # Original format: timestamp and text on same line
+    # Look for speaker pattern "Speaker Name: text"
+    speaker_inline_pattern = r'^([^:]+):\s*(.+)'
+    speaker_inline_match = re.match(speaker_inline_pattern, remaining_text)
+    
+    if speaker_inline_match:
+        speaker = speaker_inline_match.group(1).strip()# Speaker name
+        text = speaker_inline_match.group(2).strip()# Text content
+    else:
+        # No clear speaker pattern, use the whole text
+        speaker = "Speaker"
+        text = remaining_text.strip()
+    
+    return f"{formatted_time} {speaker}: {text}"
+
+def parse_new_format(content_line, formatted_time):
+    '''
+        Returning with format : HH:MM:SS SPEAKER: text
+    '''
+    # New format: text on next line    
+    # Check if line contains speaker in brackets
+    speaker_bracket_pattern = r'\[([^\]]+)\]:\s*(.+)'
+    speaker_match = re.match(speaker_bracket_pattern, content_line)
+    
+    if speaker_match:
+        speaker = speaker_match.group(1).replace('_', ' ')# Speaker name
+        text = speaker_match.group(2).strip()# Text content
+        return f"{formatted_time} {speaker}: {text}"
+    #endif
+    # Try to find speaker in "Name: text" format
+    speaker_colon_pattern = r'^([^:]+):\s*(.+)'
+    speaker_colon_match = re.match(speaker_colon_pattern, content_line)
+    
+    if speaker_colon_match:
+        speaker = speaker_colon_match.group(1).strip()
+        text = speaker_colon_match.group(2).strip()
+        return f"{formatted_time} {speaker}: {text}"
+    #endif
+    
+    # No speaker pattern found
+    speaker = "Speaker"
+    text = content_line.strip()
+    return f"{formatted_time} {speaker}: {text}"
+
 def vtt_to_txt(vtt_file, txt_file=None):
     """
     Convert a WebVTT file to a plain text transcript with timestamps
@@ -82,95 +130,55 @@ def vtt_to_txt(vtt_file, txt_file=None):
         lines = f.readlines()
     
     output_lines = []
-    
     # Skip the WEBVTT header if present
-    start_index = 0
+    #start_index = 0
     if lines and "WEBVTT" in lines[0]:
-        start_index = 1
+        lines = lines[1:]
     
-    # Process the VTT content
-    i = start_index
-    while i < len(lines):
-        line = lines[i].strip()
-        
-        # Skip empty lines
-        if not line:
-            i += 1
+    indx = 0
+    while indx < len(lines):
+        line = lines[indx].strip()
+        # 1. remove any leading blank lines
+        # 2. Check if line is just a number (cue identifier in original format)
+        if not line or re.match(r'^\d+$', line):
+            indx += 1
             continue
-        
-        # Check if line is just a number (cue identifier in original format)
-        if re.match(r'^\d+$', line):
-            # Skip to next line which should have the timestamp
-            i += 1
-            if i < len(lines):
-                line = lines[i].strip()
-        
-        # Check if this line contains a timestamp
+
+        # 3. Check if this line contains a timestamp
         # Pattern for any timestamp format with -->
         timestamp_pattern = r'([0-9:,\.]+)\s*-->\s*([0-9:,\.]+)'
         timestamp_match = re.search(timestamp_pattern, line)
         
         if timestamp_match:
-            # Get the start timestamp
+            # 3.1 Get the start timestamp
             start_timestamp = timestamp_match.group(1)
             
-            # Parse the timestamp
-            _, formatted_time = parse_timestamp(start_timestamp)
+            # 3.2 Parse the timestamp
+            _, formatted_time = parse_timestamp(start_timestamp)# formatted HH:MM:SS string
             
-            # Check if there's text on the same line (original format)
+            # 3.3 Check if there's text on the same line (original format)
             remaining_text = line[timestamp_match.end():].strip()
             
             if remaining_text:
-                # Original format: timestamp and text on same line
-                # Look for speaker pattern "Speaker Name: text"
-                speaker_inline_pattern = r'^([^:]+):\s*(.+)'
-                speaker_inline_match = re.match(speaker_inline_pattern, remaining_text)
-                
-                if speaker_inline_match:
-                    speaker = speaker_inline_match.group(1).strip()
-                    text = speaker_inline_match.group(2).strip()
-                else:
-                    # No clear speaker pattern, use the whole text
-                    speaker = "Speaker"
-                    text = remaining_text
-                
-                output_lines.append(f"{formatted_time} {speaker}: {text}")
+                output_lines.append(parse_original_format(remaining_text, formatted_time))
             else:
                 # New format: text on next line
-                i += 1
-                if i < len(lines):
-                    content_line = lines[i].strip()
-                    
-                    # Check if line contains speaker in brackets
-                    speaker_bracket_pattern = r'\[([^\]]+)\]:\s*(.+)'
-                    speaker_match = re.match(speaker_bracket_pattern, content_line)
-                    
-                    if speaker_match:
-                        speaker = speaker_match.group(1).replace('_', ' ')
-                        text = speaker_match.group(2).strip()
-                    else:
-                        # Try to find speaker in "Name: text" format
-                        speaker_colon_pattern = r'^([^:]+):\s*(.+)'
-                        speaker_colon_match = re.match(speaker_colon_pattern, content_line)
-                        
-                        if speaker_colon_match:
-                            speaker = speaker_colon_match.group(1).strip()
-                            text = speaker_colon_match.group(2).strip()
-                        else:
-                            # No speaker pattern found
-                            speaker = "Speaker"
-                            text = content_line
-                    
-                    if text:  # Only add non-empty lines
-                        output_lines.append(f"{formatted_time} {speaker}: {text}")
-        
+                indx += 1
+                if indx < len(lines):
+                    content_line = lines[indx].strip()
+                    if content_line:
+                        output_lines.append(parse_new_format(content_line, formatted_time))                    
+                #endif
+            #endif
+        #endif
         # Move to next line
-        i += 1
+        indx += 1   
+    #endwhile
     
     # Write the formatted transcript to the output file
     with open(txt_file, 'w', encoding='utf-8') as f:
         for line in output_lines:
-            f.write(f"{line}\n")
+            f.write(f"{line}\n")# output format : HH:MM:SS SPEAKER: text
     
     return txt_file
 

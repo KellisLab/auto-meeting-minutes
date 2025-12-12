@@ -185,21 +185,23 @@ def parse_bracket_format(content):
 def txt_to_xlsx(input_file, output_file):
     """
     Convert meeting transcript to Excel format.
-    
+    Input : HH:MM:SS SPEAKER: text
+
     The function handles multiple formats:
     1. Original format: 00:00:00 Speaker Name: Text
     2. Bracket format: [Speaker Name] HH:MM:SS\nText
     """
     
-    # Read the transcript file
+    # 1. Read the transcript file
     with open(input_file, 'r', encoding='utf-8') as f:
         content = f.read()
     
-    # Try original format first
+    # 2. Try original format first
+    # Pattern: HH:MM:SS SPEAKER: text
     original_pattern = r'(\d{2}:\d{2}:\d{2}) ([^:]+): (.+)'
     matches = re.findall(original_pattern, content)
     
-    # If no matches with original format, try bracket format
+    # If no matches with original format, try bracket format <--- why ?
     if not matches:
         print("Original format not detected, trying bracket format...")
         matches = parse_bracket_format(content)

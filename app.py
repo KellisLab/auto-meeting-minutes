@@ -34,31 +34,17 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 processing_jobs = {}
 
 # Import pipeline modules from current directory
-def import_module_from_file(module_name, file_path):
-    """Import a module from a file path"""
-    if not os.path.exists(file_path):
-        logger.error(f"Module not found: {file_path}")
-        return None
-        
-    spec = importlib.util.spec_from_file_location(module_name, file_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-# Import necessary modules from the pipeline
 try:
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    url2id = import_module_from_file("url2id", os.path.join(script_dir, "url2id.py"))
-    url2meeting_name = import_module_from_file("url2meeting_name", os.path.join(script_dir, "url2meeting_name.py"))
-    url2file = import_module_from_file("url2file", os.path.join(script_dir, "url2file.py"))
-    vtt2txt = import_module_from_file("vtt2txt", os.path.join(script_dir, "vtt2txt.py"))
-    txt2xlsx = import_module_from_file("txt2xlsx", os.path.join(script_dir, "txt2xlsx.py"))
-    refineStartTimes = import_module_from_file("refineStartTimes", os.path.join(script_dir, "refineStartTimes.py"))
-    xlsx2html = import_module_from_file("xlsx2html", os.path.join(script_dir, "xlsx2html.py"))
-    fullpipeline = import_module_from_file("fullpipeline", os.path.join(script_dir, "fullpipeline.py"))
-    # Try to import html_bold_converter if available
-    html_bold_converter = import_module_from_file("html_bold_converter", os.path.join(script_dir, "html_bold_converter.py"))
-except Exception as e:
+    import url2id
+    import url2meeting_name
+    import url2file
+    import vtt2txt
+    import txt2xlsx
+    import refineStartTimes
+    import xlsx2html
+    import fullpipeline
+    import html_bold_converter
+except ImportError as e:
     logger.error(f"Error importing pipeline modules: {e}")
     sys.exit(1)
 
@@ -108,7 +94,7 @@ def process_url(job_id, url, options):
         os.chdir(job_dir)
         
         status.update("extracting", "Extracting video ID from URL...", 5)
-        # Extract video ID
+        # 0. Extract video ID
         video_id = url2id.extract_id_from_url(url)
         if not video_id:
             status.set_error("Could not extract a valid video ID from the URL")
@@ -116,15 +102,15 @@ def process_url(job_id, url, options):
             return
         
         status.update("extracting_name", "Extracting meeting name from URL...", 10)
-        # Extract meeting name
-        meeting_name = url2meeting_name.get_meeting_name_from_viewer_page(url)
+        # 1. Extract meeting name
+        meeting_name = url2meeting_name.get_meeting_name_from_viewer_page(url)# remember it might be None // we will have LLM figure it out later
         if not meeting_name:
             status.update("name_fallback", "Could not extract meeting name, using video ID as fallback", 15)
             file_prefix = video_id
         else:
             # Sanitize meeting name for filenames
             file_prefix = fullpipeline.sanitize_filename(meeting_name)
-            status.update("name_extracted", f"Extracted meeting name: {meeting_name}", 15)
+        status.update("name_extracted", f"Extracted meeting name: {meeting_name}", 15)
         
         status.update("downloading", "Downloading transcript...", 20)
         # Download transcript

@@ -32,28 +32,23 @@ import importlib.util
 # Import utility functions from utils.py
 from utils import (
     seconds_to_time_str,
-    time_str_to_seconds,
-    format_corrected_timestamp,
     verify_timestamp_format,
-    get_column_letter,
     extract_transcript_data,
     extract_unique_speakers,
     create_time_batches,
     extract_text_for_batch,
-    find_best_timestamp_match,
     update_speaker_timestamps_for_topics,
     extract_topics_from_summary,
     get_api_key,
 )
 
 from speaker_summary_utils import (
-    enhance_speaker_tracking,
-    summarize_speaker_topic,
     generate_enhanced_speaker_summary_markdown,
     generate_enhanced_speaker_summary_html,
     generate_speaker_summaries_data,
 )
 
+from meetinglogger import logger
 
 # -------------------------------------------------------------
 # Constants and Configuration
@@ -64,7 +59,7 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("API_KEY")
 MODEL = os.getenv("GPT_MODEL", "gpt-4o")
 # Default batch size for meeting summaries (in minutes) 
-DEFAULT_BATCH_SIZE_MINUTES = 40
+DEFAULT_BATCH_SIZE_MINUTES = 25
 ENHANCED_SUMMARIES_AVAILABLE = True
 
 
@@ -576,57 +571,57 @@ def process_xlsx(
     # Get OpenAI API key
     api_key = get_api_key()
     if not api_key:
-        print("Warning: OpenAI API key not provided. Summaries will not be generated.")
+        logger.warning("OpenAI API key not provided. Summaries will not be generated.")
         return None, None, None, None
 
     try:
         # Read the Excel file
+        
         df = pd.read_excel(xlsx_file)
-
+        logger.info(f"Read Excel file: {xlsx_file}")
         # Extract speaker links
         speaker_links = extract_unique_speakers(df)
+        logger.info(f"Extracted {len(speaker_links)} unique speakers")
 
         # Extract full transcript data
         transcript_data = extract_transcript_data(df)
+        logger.info(f"Extracted transcript data with {len(transcript_data)} entries")
 
         # Use enhanced speaker summaries if requested and available
-        if use_enhanced_summaries and ENHANCED_SUMMARIES_AVAILABLE:
-            link_type = "clickable links" if video_id else "text-only timestamps"
-            print(f"Using enhanced speaker summaries with multiple topic support and {link_type}...")
-
-            # Generate summaries data once - this avoids duplicate API calls
-            print("Generating speaker topic summaries...")
-            summaries_data = generate_speaker_summaries_data(transcript_data, api_key)
-
-            # Generate enhanced speaker summary markdown
-            if speaker_summary_file:
-                generate_enhanced_speaker_summary_markdown(
-                    transcript_data,
-                    video_id,  # Can be None
-                    speaker_summary_file,
-                    api_key,
-                    summaries_data,  # Pass the pre-generated summaries
-                )
-                print(
-                    f"Generated enhanced speaker summary markdown: {speaker_summary_file}"
-                )
-
-            # Generate enhanced speaker summary HTML
-            if html_file:
-                generate_enhanced_speaker_summary_html(
-                    transcript_data,
-                    video_id,  # Can be None
-                    html_file,
-                    api_key,
-                    summaries_data,  # Pass the pre-generated summaries
-                )
-                print(f"Generated enhanced speaker summary HTML: {html_file}")
-
+        #if use_enhanced_summaries and ENHANCED_SUMMARIES_AVAILABLE:
+        #    link_type = "clickable links" if video_id else "text-only timestamps"
+        #    logger.info(f"Using enhanced speaker summaries with multiple topic support and {link_type}...")
+        #    # Generate summaries data once - this avoids duplicate API calls
+        #    logger.info("Generating speaker topic summaries...")
+        #    summaries_data = generate_speaker_summaries_data(transcript_data, api_key)
+        #    # Generate enhanced speaker summary markdown
+        #    if speaker_summary_file:
+        #        logger.info(f"Generating enhanced speaker summary Markdown: {speaker_summary_file}")
+        #        generate_enhanced_speaker_summary_markdown(
+        #            transcript_data,
+        #            video_id,  # Can be None
+        #            speaker_summary_file,
+        #            api_key,
+        #            summaries_data,  # Pass the pre-generated summaries
+        #        )
+        #        logger.info(f"Generated enhanced speaker summary Markdown: {speaker_summary_file}")
+        #    # Generate enhanced speaker summary HTML
+        #    if html_file:
+        #        logger.info(f"Generating enhanced speaker summary HTML: {html_file}")
+        #        generate_enhanced_speaker_summary_html(
+        #            transcript_data,
+        #            video_id,  # Can be None
+        #            html_file,
+        #            api_key,
+        #            summaries_data,  # Pass the pre-generated summaries
+        #        )
+        #        print(f"Generated enhanced speaker summary HTML: {html_file}")
+        #
         # Create time-based batches directly from transcript data
-        print("Creating time-based batches for meeting summaries...")
+        logger.info("Creating time-based batches for meeting summaries...")
         batches = create_time_batches(transcript_data, batch_size_minutes)
-        print(f"Created {len(batches)} batches")
-
+        logger.info(f"Created {len(batches)} batches")
+        
         # Generate batch summaries
         batch_summaries = []
         for i, batch in enumerate(batches, 1):
@@ -643,7 +638,7 @@ def process_xlsx(
             start_time = seconds_to_time_str(start_seconds)
             end_time = seconds_to_time_str(end_seconds)
 
-            print(f"Processing batch {i}/{len(batches)}: {start_time} - {end_time}")
+            logger.info(f"Processing batch {i}/{len(batches)}: {start_time} - {end_time}")
 
             # Generate summary
             summary = summarize_batch(batch, i, api_key)
@@ -651,12 +646,12 @@ def process_xlsx(
 
         # Generate meeting summaries HTML with topic-level clickable links (or text-only timestamps)
         # Pass transcript_data for improved timestamp matching
+        logger.info(f"Generating meeting summaries HTML: {summary_file}")
         generate_meeting_summaries_html(
             batches, batch_summaries, video_id, summary_file, transcript_data
         )
         timestamp_type = "clickable links" if video_id else "text-only timestamps"
-        print(f"Generated meeting summaries HTML with {timestamp_type}: {summary_file}")
-
+        logger.info(f"Generated meeting summaries HTML with {timestamp_type}: {summary_file}")
         # Generate meeting summaries Markdown with topic-level clickable links (or text-only timestamps)
         # Pass transcript_data for improved timestamp matching
         generate_meeting_summaries_markdown(

@@ -253,20 +253,13 @@ def create_time_batches(transcript_data, batch_size_minutes=DEFAULT_BATCH_SIZE_M
     batches = []
     batch_start = start_time
     
-    while batch_start < end_time:
-        batch_end = min(batch_start + batch_size_seconds, end_time)
+    for batch_end in range(start_time + batch_size_seconds, end_time + batch_size_seconds, batch_size_seconds):
+        # Get entries for this batch
+        batch_entries = [entry for entry in transcript_data if batch_start <= entry['seconds'] < batch_end]
         
-        # Get entries for this time range
-        batch_entries = [
-            entry for entry in transcript_data
-            if batch_start <= entry['seconds'] < batch_end
-        ]
-        
-        # Only add non-empty batches
         if batch_entries:
             batches.append(batch_entries)
         
-        # Move to next batch
         batch_start = batch_end
     
     return batches
