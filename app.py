@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, send_file, session
+from flask import Flask, render_template, request, jsonify, send_file, session, redirect, url_for
 import os
 import uuid
 import threading
@@ -10,6 +10,9 @@ from pathlib import Path
 import shutil
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
+# from authlib.integrations.flask_client import OAuth  # <--- COMMENTED OUT
+import requests  # <--- ADD THIS IMPORT
+import json  # Add this import at the top
 
 # Load environment variables
 load_dotenv()
@@ -23,9 +26,34 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)  # For session management
+app.secret_key = os.getenv("AUTH_SECRET", os.urandom(24)) # Use AUTH_SECRET from env if available
 app.config['UPLOAD_FOLDER'] = 'temp_files'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload size
+
+# --- OAuth Configuration ---
+# oauth = OAuth(app)  # <--- COMMENTED OUT
+
+# Register Google
+# oauth.register(
+#     name='google',
+#     client_id=os.getenv("GOOGLE_OAUTH_ID"),
+#     client_secret=os.getenv("GOOGLE_OAUTH_SECRET"),
+#     server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+#     client_kwargs={'scope': 'openid email profile'}
+# )
+
+# Register GitHub
+# oauth.register(
+#     name='github',
+#     client_id=os.getenv("GITHUB_OAUTH_ID"),
+#     client_secret=os.getenv("GITHUB_OAUTH_SECRET"),
+#     access_token_url='https://github.com/login/oauth/access_token',
+#     access_token_params=None,
+#     authorize_url='https://github.com/login/oauth/authorize',
+#     authorize_params=None,
+#     api_base_url='https://api.github.com/',
+#     client_kwargs={'scope': 'user:email'},
+# )
 
 # Ensure temp directory exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -113,7 +141,7 @@ def process_url(job_id, url, options):
         status.update("name_extracted", f"Extracted meeting name: {meeting_name}", 15)
         
         status.update("downloading", "Downloading transcript...", 20)
-        # Download transcript
+        # 2. Download transcript
         srt_file = f"{file_prefix}.srt"
         language = options.get("language", "English_USA")
         
@@ -123,24 +151,15 @@ def process_url(job_id, url, options):
             return
         
         status.update("converting", "Converting SRT to TXT...", 30)
-        # Convert SRT to TXT
+        # 3. Convert SRT to TXT
         txt_file = f"{file_prefix}.txt"
         txt_file = vtt2txt.vtt_to_txt(srt_file, txt_file)
         
         status.update("excel", "Converting TXT to Excel format...", 40)
-        # Convert TXT to XLSX
+        # 4. Convert TXT to XLSX
         xlsx_file = f"{file_prefix}.xlsx"
         xlsx_file = txt2xlsx.txt_to_xlsx(txt_file, xlsx_file)
-        
-        # Refine start times if not skipped
-        if not options.get("skip_refinement", False):
-            status.update("refining", "Refining start times...", 50)
-            refined_xlsx_file = f"{file_prefix}_refined.xlsx"
-            refined_xlsx_file = refineStartTimes.refine_start_times(xlsx_file, refined_xlsx_file)
-        else:
-            status.update("skipping", "Skipping refinement step...", 50)
-            refined_xlsx_file = xlsx_file
-        
+
         status.update("html", "Generating HTML with summaries...", 60)
         # Generate HTML with summaries
         html_file = f"{file_prefix}_speaker_summaries.html"
@@ -154,10 +173,8 @@ def process_url(job_id, url, options):
         # Important: This matches how fullpipeline.py calls process_xlsx
         status.update("html", "Creating HTML with speaker summaries...", 65)
         try:
-            # Looking at xlsx2html.py, it appears that html_format is not a parameter
-            # Let's only pass the parameters we know are supported
             result_files = xlsx2html.process_xlsx(
-                refined_xlsx_file,
+                xlsx_file,
                 video_id,
                 html_file, 
                 speaker_summary_file,
@@ -166,8 +183,15 @@ def process_url(job_id, url, options):
             )
             
             # Unpack result files if available
-            if result_files and len(result_files) == 4:
-                html_file, summary_file, speaker_summary_file, meeting_summary_md_file = result_files
+            if result_files:
+                # Handle new 5-file return (includes Mantis Excel)
+                if len(result_files) == 5:
+                    html_file, summary_file, speaker_summary_file, meeting_summary_md_file, mantis_file = result_files
+                    status.add_output_file("mantis_xlsx", mantis_file)
+                # Handle legacy 4-file return
+                elif len(result_files) == 4:
+                    html_file, summary_file, speaker_summary_file, meeting_summary_md_file = result_files
+                    
         except Exception as e:
             logger.error(f"Error in xlsx2html processing: {e}")
             status.update("html", f"Warning: Error in HTML generation: {str(e)}", 70)
@@ -201,8 +225,6 @@ def process_url(job_id, url, options):
         status.add_output_file("srt", srt_file)
         status.add_output_file("txt", txt_file)
         status.add_output_file("xlsx", xlsx_file)
-        if refined_xlsx_file != xlsx_file:
-            status.add_output_file("refined_xlsx", refined_xlsx_file)
         status.add_output_file("html", html_file)
         status.add_output_file("summary_html", summary_file)
         status.add_output_file("speaker_summary_md", speaker_summary_file)
@@ -297,6 +319,64 @@ def cleanup(job_id):
     
     return jsonify({"success": True})
 
+# --- Auth Routes ---
+
+# @app.route('/login')
+# def login_page():
+#     # If already logged in, go to index
+#     if 'user' in session:
+#         return redirect(url_for('index'))
+#     return render_template('login.html')
+
+# @app.route('/auth/<provider>')
+# def login(provider):
+#     # Define your public base URL (default to localhost for dev)
+#     base_url = os.getenv("APP_BASE_URL", "http://localhost:5001")
+    
+#     # Construct the callback URL manually
+#     redirect_uri = f"{base_url}/auth/{provider}/callback"
+    
+#     return oauth.create_client(provider).authorize_redirect(redirect_uri)
+
+# @app.route('/auth/<provider>/callback')
+# def auth_callback(provider):
+#     client = oauth.create_client(provider)
+#     token = client.authorize_access_token()  # This contains the access_token
+    
+#     user_info = None
+#     if provider == 'google':
+#         user_info = token.get('userinfo')
+#     elif provider == 'github':
+#         resp = client.get('user')
+#         user_info = resp.json()
+#         if not user_info.get('email'):
+#             email_resp = client.get('user/emails')
+#             user_info['email'] = email_resp.json()[0]['email']
+
+#     if user_info:
+#         session['user'] = user_info
+#         # STORE THE TOKEN AND PROVIDER FOR LATER USE
+#         session['oauth_token'] = token 
+#         session['oauth_provider'] = provider
+#         return redirect(url_for('index'))
+    
+#     return "Authentication failed", 401
+
+# @app.route('/logout')
+# def logout():
+#     session.pop('user', None)
+#     return redirect(url_for('login_page'))
+
+# --- Protect Existing Routes ---
+
+# @app.before_request
+# def require_login():
+#     # List of routes that don't require login
+#     allowed_routes = ['login_page', 'login', 'auth_callback', 'static']
+    
+#     if request.endpoint not in allowed_routes and 'user' not in session:
+#         return redirect(url_for('login_page'))
+
 # Setup automatic cleanup of temp files older than 1 day
 @app.before_request
 def cleanup_old_jobs():
@@ -315,6 +395,114 @@ def cleanup_old_jobs():
                         del processing_jobs[item]
                 except Exception as e:
                     logger.error(f"Error cleaning up directory {item_path}: {e}")
+
+@app.route('/invoke-mantis', methods=['POST'])
+def invoke_mantis():
+    """
+    Forwards the processed meeting data to MantisAPI.
+    """
+    data = request.json
+    job_id = data.get('job_id')
+    
+    if not job_id or job_id not in processing_jobs:
+        return jsonify({"error": "Invalid Job ID"}), 400
+
+    # 1. Get Configuration
+    mantis_url = os.getenv('MANTIS_API_URL')
+    if not mantis_url:
+        return jsonify({"error": "MantisAPI URL not configured"}), 500
+
+    # 2. Locate the file
+    status = processing_jobs[job_id]
+    
+    # Prefer the structured Mantis file, fallback to raw transcript
+    file_path = status.output_files.get('mantis_xlsx')
+    
+    if file_path:
+        # Mapping for the Summarized Topics File
+        # Columns: Title, Speaker, Time, Seconds, Content, Link
+        column_mapping = [
+            {"title": True},                    # Title
+            {"categoric": True},                # Speaker
+            {"categoric": True},                # Time
+            {"numeric": True},                  # Seconds
+            {"semantic": True},                 # Content
+            {"links": True}                     # Link
+        ]
+    else:
+        # Fallback to raw transcript if summarization failed
+        file_path = status.output_files.get('xlsx')
+        if not file_path:
+            return jsonify({"error": "No suitable Excel file found."}), 404
+            
+        # Mapping for Raw Transcript
+        # Columns: Seconds, Time, Name, Text
+        column_mapping = [
+            {"numeric": True},                  # Seconds
+            {"categoric": True},                # Time
+            {"categoric": True},                # Name
+            {"semantic": True, "title": True}   # Text
+        ]
+
+    full_path = os.path.join(app.config['UPLOAD_FOLDER'], job_id, file_path)
+
+    try:
+        # 3. Prepare Multipart Upload
+        with open(full_path, 'rb') as f:
+            files = {
+                'file': (file_path, f, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            }
+            
+            form_data = {
+                'user_id': str('dd585847-d8ec-5f53-ac1b-72c01f80652a'),# alex-d4v user id
+                'map_name': f"Meeting {job_id}",
+                'space_name': f"Auto Meeting Minutes {str(time.strftime('%Y-%m-%d'))}",
+                'data_types': json.dumps(column_mapping),
+                'is_public': 'false',
+                # --- ADDED FIELDS TO MATCH FRONTEND ---
+                'ai_provider': 'openai',
+                'embedding_service': 'openai-embeddings',
+                'chat_service': 'openai-chat'
+            }
+
+            # FIX: Update endpoint to match upload_backend.tsx (/synthesis/landscape/)
+            target_endpoint = f"{mantis_url}/synthesis/landscape/" 
+            
+            logger.info(f"Sending {file_path} to MantisAPI Landscape at {target_endpoint}")
+            
+            response = requests.post(
+                target_endpoint, 
+                files=files, 
+                data=form_data, 
+                timeout=60
+            )
+        
+        if response.status_code in [200, 201]:
+            mantis_data = response.json()
+            space_id = mantis_data.get('space_id')
+            map_id = mantis_data.get('map_id')
+            
+            # Construct the Frontend URL for redirection
+            frontend_base = os.getenv('MANTIS_FRONTEND_URL', 'http://localhost:3000')
+            redirect_url = f"{frontend_base}/progress/synthesis_csv/{space_id}/{map_id}"
+    
+            return jsonify({
+                "success": True, 
+                "message": "Successfully created Landscape in Mantis",
+                "map_id": map_id,
+                "redirect_url": redirect_url,
+                "mantis_response": mantis_data
+            })
+        else:
+            logger.error(f"MantisAPI Error: {response.status_code} - {response.text}")
+            return jsonify({
+                "error": f"MantisAPI rejected request: {response.status_code}",
+                "details": response.text
+            }), 502
+
+    except Exception as e:
+        logger.error(f"Failed to invoke MantisAPI: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     # Log API model and key status

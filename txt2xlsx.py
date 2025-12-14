@@ -185,187 +185,40 @@ def parse_bracket_format(content):
 def txt_to_xlsx(input_file, output_file):
     """
     Convert meeting transcript to Excel format.
-    Input : HH:MM:SS SPEAKER: text
-
-    The function handles multiple formats:
-    1. Original format: 00:00:00 Speaker Name: Text
-    2. Bracket format: [Speaker Name] HH:MM:SS\nText
+    Input: HH:MM:SS SPEAKER: text
     """
     
-    # 1. Read the transcript file
+    # Read and parse transcript
     with open(input_file, 'r', encoding='utf-8') as f:
         content = f.read()
     
-    # 2. Try original format first
-    # Pattern: HH:MM:SS SPEAKER: text
-    original_pattern = r'(\d{2}:\d{2}:\d{2}) ([^:]+): (.+)'
-    matches = re.findall(original_pattern, content)
-    
-    # If no matches with original format, try bracket format <--- why ?
-    if not matches:
-        print("Original format not detected, trying bracket format...")
-        matches = parse_bracket_format(content)
-        print(f"Found {len(matches)} entries in bracket format")
-    else:
-        print(f"Found {len(matches)} entries in original format")
+    # Parse: HH:MM:SS SPEAKER: text
+    pattern = r'(\d{2}:\d{2}:\d{2}) ([^:]+): (.+)'
+    matches = re.findall(pattern, content)
     
     if not matches:
-        raise ValueError("No valid transcript entries found. Please check the file format.")
+        raise ValueError("No valid transcript entries found")
     
-    # Prepare data for DataFrame
+    # Convert to DataFrame
     data = []
-    
-    # Track first occurrence of each speaker
-    first_occurrences = {}
-    
-    # Collect all unique speakers first
-    all_speakers = set()
     for time_str, speaker, text in matches:
-        all_speakers.add(speaker)
-    
-    # Generate unique colors for all speakers
-    speaker_colors = get_speaker_colors(all_speakers)
-    
-    for time_str, speaker, text in matches:
-        seconds = time_to_seconds(time_str)
-        
-        # Check if this is the first occurrence of the speaker
-        first_time = None
-        first_seconds = None
-        first_speaker = None
-        
-        if speaker not in first_occurrences:
-            first_occurrences[speaker] = (time_str, seconds)
-            first_time = time_str
-            first_seconds = seconds
-            first_speaker = speaker
+        # Convert HH:MM:SS to seconds
+        h, m, s = map(int, time_str.split(':'))
+        seconds = h * 3600 + m * 60 + s
         
         data.append({
             'Seconds': seconds,
             'Time': time_str,
-            'First': first_speaker,
-            'First_Time': first_time,
-            'First_Seconds': first_seconds,
             'Name': speaker,
             'Text': text
         })
     
-    # Create DataFrame
     df = pd.DataFrame(data)
     
-    # Detect speaker topics
-    speaker_topics = detect_speaker_topics(data)
+    # Save to Excel
+    df.to_excel(output_file, index=False, engine='openpyxl')
     
-    # Add topic metadata to DataFrame
-    df['Topic_Number'] = None
-    df['Topic_Start_Time'] = None
-    df['Topic_Start_Seconds'] = None
-    df['All_Occurrences'] = None
-    
-    # Populate topic metadata
-    for speaker, topics in speaker_topics.items():
-        # Convert topics to a JSON string for storage
-        topic_json = json.dumps(topics)
-        
-        # For each topic
-        for topic_num, topic in enumerate(topics, 1):
-            # For each row index in this topic
-            for row_idx in topic['indices']:
-                # Update DataFrame with topic metadata
-                df.loc[row_idx, 'Topic_Number'] = topic_num
-                df.loc[row_idx, 'Topic_Start_Time'] = topic['start_time']
-                df.loc[row_idx, 'Topic_Start_Seconds'] = topic['start_seconds']
-    
-    # Store all occurrences for each speaker
-    for speaker in all_speakers:
-        # Get all indices and timestamps for this speaker
-        speaker_indices = df.index[df['Name'] == speaker].tolist()
-        speaker_times = df.loc[df['Name'] == speaker, ['Seconds', 'Time']].to_dict('records')
-        
-        # Create a JSON string of all occurrences
-        occurrences_json = json.dumps(speaker_times)
-        
-        # Update all rows for this speaker
-        df.loc[df['Name'] == speaker, 'All_Occurrences'] = occurrences_json
-    
-    # Create Excel workbook
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Meeting Transcript"
-    
-    # Add headers
-    headers = [
-        'Seconds', 'Time', 'First', 'First_Time', 'First_Seconds', 
-        'Name', 'Text', 'Topic_Number', 'Topic_Start_Time', 
-        'Topic_Start_Seconds', 'All_Occurrences'
-    ]
-    
-    for col_num, header in enumerate(headers, 1):
-        ws.cell(row=1, column=col_num).value = header
-        ws.cell(row=1, column=col_num).font = Font(bold=True)
-    
-    # Calculate gradient positions based on time
-    min_seconds = min(row['Seconds'] for row in data)
-    max_seconds = max(row['Seconds'] for row in data)
-    time_range = max_seconds - min_seconds
-    
-    # Add data and apply formatting
-    for row_num, row_data in enumerate(data, 2):
-        # Calculate time gradient position (0-1)
-        if time_range > 0:
-            time_position = (row_data['Seconds'] - min_seconds) / time_range
-        else:
-            time_position = 0
-        
-        # Get rainbow color for time
-        time_color = get_rainbow_color(time_position)
-        
-        for col_num, header in enumerate(headers, 1):
-            cell = ws.cell(row=row_num, column=col_num)
-            
-            # Get the value, handling new fields
-            if header in row_data:
-                cell.value = row_data[header]
-            else:
-                # Get the value from DataFrame for the added columns
-                cell.value = df.iloc[row_num-2][header] if header in df.columns else None
-            
-            # Apply rainbow gradient to Seconds and First_Seconds columns
-            if header in ('Seconds', 'First_Seconds', 'Topic_Start_Seconds'):
-                if cell.value is not None:  # Only color cells with values
-                    cell.fill = PatternFill(start_color=time_color, end_color=time_color, fill_type="solid")
-            
-            # Apply color to speaker names (except Manolis Kellis)
-            elif header in ('Name', 'First') and cell.value and cell.value != "Manolis Kellis":
-                speaker = cell.value
-                if speaker in speaker_colors:
-                    cell.fill = PatternFill(start_color=speaker_colors[speaker], 
-                                           end_color=speaker_colors[speaker],
-                                           fill_type="solid")
-    
-    # Auto-adjust column width
-    for col_idx, header in enumerate(headers, 1):
-        max_length = len(header) + 2  # Start with header length
-        
-        # Check data length
-        for row_idx in range(2, len(data) + 2):
-            cell_value = ws.cell(row=row_idx, column=col_idx).value
-            if cell_value:
-                # For JSON fields, limit the display length
-                if header in ['All_Occurrences']:
-                    max_length = max(max_length, 50)  # Cap JSON fields
-                else:
-                    max_length = max(max_length, min(len(str(cell_value)), 100))  # Cap at 100 chars
-        
-        # Adjust column width
-        adjusted_width = max_length + 2
-        col_letter = get_column_letter(col_idx)
-        ws.column_dimensions[col_letter].width = adjusted_width
-    
-    # Save the workbook
-    wb.save(output_file)
-    
-    print(f"Transcript converted to Excel format: {output_file}")
+    print(f"Converted {len(matches)} entries to {output_file}")
     return output_file
 
 def get_column_letter(col_idx):

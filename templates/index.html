@@ -157,6 +157,17 @@
                         <div class="row" id="file-container">
                             <!-- File cards will be added here dynamically -->
                         </div>
+
+                        <!-- NEW: Mantis Integration Section -->
+                        <div class="mt-4 p-3 border rounded bg-light">
+                            <h5 class="mb-2"><i class="bi bi-diagram-3-fill"></i> Mantis Integration</h5>
+                            <p class="text-muted small mb-2">Upload these minutes to the central Mantis Knowledge Base to generate a synthesis map.</p>
+                            <button id="send-to-mantis-btn" class="btn btn-success">
+                                <i class="bi bi-cloud-upload"></i> Upload to Mantis
+                            </button>
+                            <div id="mantis-status" class="mt-2 fw-bold"></div>
+                        </div>
+                        <!-- END NEW SECTION -->
                         
                         <button class="btn btn-outline-danger mt-3" id="cleanup-btn">Clean Up Files</button>
                     </div>
@@ -406,6 +417,48 @@
                         alert('Failed to clean up files');
                     }
                 });
+            });
+
+            $('#send-to-mantis-btn').on('click', async function() {
+                if (!jobId) return;
+                
+                const btn = $(this);
+                const statusDiv = $('#mantis-status');
+                
+                // Disable button and show loading state
+                btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Uploading...');
+                statusDiv.text("Uploading to Mantis...").css('color', 'black');
+                
+                try {
+                    const response = await fetch('/invoke-mantis', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ job_id: jobId }) // Use the local jobId variable
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success && result.redirect_url) {
+                        statusDiv.text("Redirecting to Mantis...").css('color', 'green');
+                        btn.html('<i class="bi bi-check-lg"></i> Uploaded');
+                        
+                        // Open Mantis in a new tab
+                        setTimeout(() => {
+                            window.open(result.redirect_url, '_blank');
+                        }, 1000);
+                        // Re-enable button after a short delay
+                        setTimeout(() => {
+                            btn.prop('disabled', false).html('<i class="bi bi-cloud-upload"></i> Upload to Mantis');
+                        }, 2000);
+                    } else {
+                        statusDiv.text("Error: " + (result.error || "Unknown error")).css('color', 'red');
+                        btn.prop('disabled', false).html('<i class="bi bi-cloud-upload"></i> Upload to Mantis');
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                    statusDiv.text("Network Error").css('color', 'red');
+                    btn.prop('disabled', false).html('<i class="bi bi-cloud-upload"></i> Upload to Mantis');
+                }
             });
         });
     </script>
