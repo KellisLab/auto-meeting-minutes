@@ -358,109 +358,108 @@ def summarize_batch(batch_entries, batch_number, api_key):
     start_time = seconds_to_time_str(start_seconds)
     end_time = seconds_to_time_str(end_seconds)
 
-    # Create a mapping of speaker names to ALL their timestamps for this batch
-    speaker_timestamps = {}
-    for entry in batch_entries:
-        speaker = entry["name"]
-        if speaker not in speaker_timestamps:
-            speaker_timestamps[speaker] = []
-
-        # Add this timestamp to the list for this speaker
-        speaker_timestamps[speaker].append(
-            {
-                "seconds": entry["seconds"],
-                "time_str": entry["time_str"],
-                "text": entry["text"][:100],  # Include a snippet of text for context
-            }
-        )
-
-    # Prepare the timestamp reference for the model
-    timestamp_reference = "SPEAKER TIMESTAMPS (DO NOT MODIFY THESE):\n"
-    for speaker, timestamps in speaker_timestamps.items():
-        # Sort timestamps chronologically
-        sorted_timestamps = sorted(timestamps, key=lambda x: x["seconds"])
-
-        # Include all timestamps for the speaker with context snippets
-        timestamp_reference += f"\n{speaker}:\n"
-        for i, ts in enumerate(sorted_timestamps, 1):
-            timestamp_reference += f"  {i}. {ts['time_str']} - '{ts['text']}...'\n"
-
     try:
         openai.api_key = api_key
          # Determine if this is the first batch (meeting start)
         is_first_batch = batch_number == 1
         
-        # Adjust guardrails based on batch position
-        if is_first_batch:
-            batch_context = """NON-NEGOTIABLE GUARDRAILS FOR FIRST BATCH:
-           - This is the beginning of the meeting. Start from the earliest timestamp.
-           - If the earliest content is simple (greetings, technical setup), title it: "Introductions & Setup".
-           - If the earliest content is substantive, title it based on the content (e.g., "Project Kickoff", "Budget Discussion").
-           - NEVER claim the meeting began late or at a later timestamp."""
-        else:
-            batch_context = f"""NON-NEGOTIABLE GUARDRAILS FOR CONTINUATION BATCH:
-           - This is batch #{batch_number} of an ongoing meeting (timespan: {start_time} - {end_time}).
-           - Start summarizing from the earliest timestamp in THIS batch ({start_time}).
-           - Do NOT create "Introductions & Setup" topics - the meeting has already started.
-           - Do NOT write phrases suggesting the meeting is beginning.
-            This is batch #{batch_number} of an ongoing meeting (timespan: {start_time} - {end_time}) .
-           - Begin directly with the substantive topics being discussed in this time segment."""
-        
         base_prompt = f"""
-        You are a meeting summarization assistant for the Mantis AI platform meetings .
-        Mantis AI is a cartography platform developed and maintained by MIT's Kellis Lab to analyze and visualize complex data.
+        You are a meeting summarization assistant . 
         You are given a batch of transcript text from a meeting along with detailed speaker timestamps.
-        The transcripts are generated from meeting recordings and may contain informal language, filler words, and disfluencies.
+        Your task is to act as a technical summarizer who identifies key topics discussed in the meeting batch,
+        assigns each topic to the appropriate speaker(s), and provides concise summaries for each topic.
+        You must follow the instructions below to ensure accurate timestamp usage and content summarization.
+        Your style should be formal, technical, and objective , using third-person phrasing.
+        
+        ## INPUT :
+        - MEETING TRANSCRIPT BATCH TEXT: The transcript text for the current batch of the meeting.
+        - SPEAKER TIMESTAMPS: A detailed list of timestamps for each speaker in the batch, including context snippets.
 
-        Your task is to act as a technical summarizer :
+        ## TASK AND CONSTRAINTS
+        
+        CONTENT MINING:
         1. Identify distinct topics discussed in the batch text.
         2. For each topic, determine the primary speaker(s) involved.
-        3. Find the MOST RELEVANT timestamp from the provided SPEAKER TIMESTAMPS for the speaker actually discussing that topic.
-        4. Convert missensed words into their correct technical terms when possible.
-        5. Filter out noise such as filler words, disfluencies and non meaningful content.
-        6. Summarize each topic concisely, focusing on technical details and decisions.
-        7. Format the output in Markdown with specific structure.
+        3. Find adjacent text segments from the speaker(s) that relate to the topic.
+        4. Define the interval during which the topic was discussed.
+        5. Assign the MOST RELEVANT timestamp from SPEAKER TIMESTAMPS to each topic based on when the topic was discussed.
+        6. Summarize each topic in a detailed manner, focusing on technical details, decisions, and action items.
+        7. Ensure all topics are covered, even if briefly mentioned.        
 
-        FORMATTING AND STRUCTURE RULES:
+        CONTENT REQUIREMENTS:
+
+        ## 1. MINING :
+        - The current text must be paraphrased, ensure maximum detailed coverage of all topics discussed.
+        - Summarize each topic in a detailed manner, focusing on technical details, decisions, and action items.
+        - The topics might be generic , technical , or social in nature - ensure all topics are captured.
+        - Provide the whole spectrum of the topic as discussed by the speaker(s) through the time interval.
+        - Ignore noise such as "[music]", "[applause]", "[inaudible]" , your task is to summarize meaningful content only.
+        - Use the exact timestamps provided in SPEAKER TIMESTAMPS.
+        - The text must include interactions between speakers when relevant . Example : ... [Speaker A] ... [X] , while [Speaker B] ... [Y] ...
+        - Some topics may have more detail than others, ensure all topics are covered.
+        - Multiple speakers may discuss the same topic; list all relevant speakers.
+        
+        ## 2. FORMATTING :
+        
+        ### GENERAL
+        - Present the output in JSON format as specified below.
+        - Each topic must have a title, list of speakers, assigned timestamp, and detailed summary.
+        - Titles should be concise yet descriptive of the topic discussed.
+        - Use <b>...</b> tags to bold important terms in the summaries.
+        - Important terms include technical terms, decisions, action items, and key concepts.
+        - Ensure proper JSON syntax without deviations.
+        
+        ### WRITING STYLE
         {'- You MUST begin with the first topical content **even if it is lightweight** (greetings, agenda, setup).' if is_first_batch else ''}
         {'- If the earliest content is simple, title it: "Introductions & Setup"' if is_first_batch else ''}
-        - The **FIRST output line MUST use the earliest timestamp in the batch window**: {start_time , end_time}.
-        - Never invent or modify timestamps. Use only those in SPEAKER TIMESTAMPS.
-        - Obey the exact output format and paragraph only content rule.
-        
-        CONTENT RULES:
-        - Each topic summary must be a single paragraph , that paraphrases the content discussed by the speaker(s) at that timestamp.
-        - Highlight important terms using <b>...</b> tags.
-        - Highlight speaker names using <b>...</b> tags.
-        - It is possible that multiple speakers discuss the same topic; list all relevant speakers.
-        - Focus on technical details, decisions, action items, and key concepts.
-        - When the tone is informal, rephrase it into formal language.
-        
-        CONTENT REQUIREMENTS:
-        - Summarize each topic concisely, focusing on technical details and decisions.
-        - The text must include interactions between speakers when relevant . Example : ... [Speaker A] ... [X] , while [Speaker B] ... [Y] ...
-        - Use the speaker names exactly as they appear in the transcript.
-        - Use the exact timestamps provided in SPEAKER TIMESTAMPS.
-        - Ignore noise such as "[music]", "[applause]", "[inaudible]" , your task is to summarize meaningful content only.
+        - Capture the timeline of the discussion of the topics as accurately as possible.
+        - Contain the whole spectrum of the topic discussed by the speaker(s) through the time interval.
+        - A topic may be generic , technical , or social in nature - ensure all topics are captured.
         - Write in Third Person; Paraphrase; do NOT copy from the transcript.
         - Do not include first person phrasing (no "I/We/You…"). Do not replicate dialogue format.
         - Avoid proper nouns unless needed for clarity (use roles when possible).
+        - If the discussion is light or social, still include it as a topic but summarize accordingly.
         
-        TIMESTAMP RULES:
-        - The FIRST topic MUST use the earliest timestamp from this batch window: {start_time , end_time}.
-        - For each topic, choose the MOST RELEVANT timestamp from SPEAKER TIMESTAMPS for the speaker discussing that topic.
-        - If multiple candidate timestamps match a topic, break ties deterministically:
-            1. Prefer the earliest timestamp , which is closest to the topic discussion.
-            2. If still tied, choose the chronologically earliest timestamp.
-        - Never create, edit, or infer a timestamp.
-        - Use only one timestamp per topic summary.
+        ### CONTENT CLARIFICATIONS
+        - The text is produced from a software recording of a meeting, there might be discrepencies in technical terms, fix them when possible.
+        - The software may mispell technical terms, correct them when possible.
+        - Do NOT fabricate content, only summarize what is present in the transcript text.
+        - Do NOT omit any topics, even if they seem minor.
+        - Focus on technical details, decisions, action items, and key concepts , bold important terms using <b>...</b> tags.
+        - The tone of the summary changes based on the content - it can be formal, technical, or casual as needed.
 
-        OUTPUT RULES:
-        - MUST include speaker names in the format: **<Topic_Title> - <Speaker_Name> , ... , <Speaker_Name>** (HH:MM:SS) : <Summary_Content>
-        - Include each speaker's name exactly as in SPEAKER TIMESTAMPS.
-        - Replicate the timestamps from the SPEAKER TIMESTAMPS section
-        - Highlight names, technical terms, decisions, action items, key concepts and important terms by enclosing them in <b>...</b>.
-        - The content is the paraphrased summary of the topic discussed by the speaker at that timestamp.
+        TIMESTAMP RULES:
+        - For each topic, choose the MOST RELEVANT timestamp from SPEAKER TIMESTAMPS for the speaker actually discussing that topic.
+        - The FIRST topic MUST use the earliest timestamp from this batch window: {start_time} - {end_time} .
+        - Subsequent topics should use timestamps that are as close as possible to when the topic was discussed.
+        - If a topic is discussed by multiple speakers, choose the earliest timestamp among them.
+        - If a topic spans multiple timestamps, choose the timestamp that best represents when the topic began.
+        - If a topic is only briefly mentioned, still assign the closest relevant timestamp.
+        - Never create, edit, or infer a timestamp. They are going to be used as clickable links later.
+        - Use the exact format (H:MM:SS) for timestamps.
+
+        ## OUTPUT :
+        ```json
+        {'''
+            "results": {
+                "<Topic 1> : {
+                    "speakers": ["<Speaker_Name>" , ...],
+                    "timestamp": "(H:MM:SS)",
+                    "summary": "<Concise_summary_of_the_topic_discussed>",
+                    "type": "<Topic_Type>"
+                },
+                ...
+                "<Topic N>": {
+                    "speakers": ["<Speaker_Name>" , ...],
+                    "timestamp": "(H:MM:SS)",
+                    "summary": "<Concise_summary_of_the_topic_discussed>",
+                    "type": "<Topic_Type>"
+                }
+            }
+        '''}
+        ```
+
+        Remember to strictly follow the JSON format above without deviation.
         """
 
         # Using chat completions API
@@ -476,41 +475,49 @@ def summarize_batch(batch_entries, batch_number, api_key):
                     I am providing you with the transcript text for batch #{batch_number} (timespan: {start_time} - {end_time}) below:
                     {batch_text}
                     \n\n
-                    Your task is to summarize the batch text into distinct topics as per the instructions given.                    
+                    Your task is to summarize the batch text into distinct topics as per the instructions given.
+                    The current batch contains {len(batch_entries)} speaker entries amd it is a part of a larger meeting for the Mantis AI platform.
+                    Mantis AI is a platform developed and maintained by MIT's Kellis Lab , and it is focused on cognitive data science and data cartography.
+                    Please provide the summary in the specified JSON format.                    
                     """},
             ],
             max_tokens=10000,  # More tokens for batch summaries
         )
-
-        summary = response.choices[0].message.content.strip()
-
-        # Post-process to verify timestamps are from the provided list
-        for speaker, timestamps in speaker_timestamps.items():
-            # Create a set of valid timestamps for this speaker
-            valid_timestamps = {ts["time_str"] for ts in timestamps}
-
-            # Look for patterns like "**Topic - Speaker** (H:MM:SS):" with timestamps
-            pattern = f"\\*\\*[^*]+ - {re.escape(speaker)}\\*\\* \\(([0-9]:[0-9]{{2}}:[0-9]{{2}})\\)"
-            matches = re.finditer(pattern, summary)
-
-            for match in matches:
-                found_timestamp = match.group(1)
-
-                # Check if the timestamp is valid for this speaker
-                if found_timestamp not in valid_timestamps:
-                    # Use the first timestamp as fallback
-                    fallback_timestamp = timestamps[0]["time_str"]
-
-                    # Replace the incorrect timestamp with a valid one
-                    summary = summary.replace(
-                        f"**{match.group(0).split('**')[1]}** ({found_timestamp})",
-                        f"**{match.group(0).split('**')[1]}** ({fallback_timestamp})",
-                    )
-                    print(
-                        f"Warning: Replaced invalid timestamp {found_timestamp} with {fallback_timestamp} for {speaker}"
-                    )
-
-        return summary
+        
+        # format the response to be a list of lines of the form : **<Topic_Title> - <Speaker_Name> , ... , <Speaker_Name>** (H:MM:SS) : <Summary_Content>
+        # 1. Extract the text content from the response
+        summary_text = response.choices[0].message.content.strip()
+        # 2. Extract JSON part from the response
+        import json
+        # Remove markdown code blocks if present
+        json_text = summary_text
+        if "```json" in json_text:
+            json_text = json_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in json_text:
+            json_text = json_text.split("```")[1].split("```")[0].strip()
+        # Parse the JSON
+        try:
+            data = json.loads(json_text)
+            results = data.get("results", {})
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON from batch {batch_number}: {e}")
+            logger.error(f"Raw response: {summary_text}")
+            return f"Error parsing JSON response: {str(e)}"
+        # 3. Construct the list of lines in the format: **<Topic_Title> - <Speaker_Name>, ..., <Speaker_Name>** (H:MM:SS): <Summary_Content>
+        formatted_lines = []
+        for topic_title, topic_data in results.items():
+            speakers = topic_data.get("speakers", [])
+            timestamp = topic_data.get("timestamp", "")
+            summary = topic_data.get("summary", "")
+            # Format speaker names
+            speaker_str = ", ".join(speakers)
+            # Construct the formatted line
+            line = f"**{topic_title} - {speaker_str}** {timestamp}: {summary}"
+            formatted_lines.append(line)
+        # Join all lines with newlines
+        formatted_summary = "\n\n".join(formatted_lines)
+        logger.info(f"Generated summary for batch {batch_number} with {len(results)} topics")
+        return formatted_summary
 
     except Exception as e:
         return f"Error generating batch summary: {str(e)}"

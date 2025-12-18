@@ -282,53 +282,73 @@ def summarize_batch_enhanced(batch_entries, batch_number, api_key, custom_prompt
         You are given a batch of transcript text from a meeting along with detailed speaker timestamps.
         Your task is to act as a technical summarizer who identifies key topics discussed in the meeting batch,
         assigns each topic to the appropriate speaker(s), and provides concise summaries for each topic.
-        You MUST follow the instructions below VERY CAREFULLY to ensure accurate timestamp usage and content summarization.
+        You must follow the instructions below to ensure accurate timestamp usage and content summarization.
         Your style should be formal, technical, and objective , using third-person phrasing.
         
-        NON-NEGOTIABLE GUARDRAILS:
-        1. You MUST begin with the first topical content **even if it is lightweight** (greetings, agenda, setup).
-        2. The **FIRST output line MUST use the earliest timestamp in this batch window**: {earliest_timestamp}
-        3. If the earliest content is simple, title it: "Introductions & Setup".
-        4. Never invent or modify timestamps. Use only those in SPEAKER TIMESTAMPS.
-        5. Obey the exact output format and paragraph-only content rule.
+        ## INPUT :
+        - MEETING TRANSCRIPT BATCH TEXT: The transcript text for the current batch of the meeting.
+        - SPEAKER TIMESTAMPS: A detailed list of timestamps for each speaker in the batch, including context snippets.
 
-        OUTPUT RULES:
-        1. MUST include speaker names in the format: **<Topic_Title> - <Speaker_Name>** (HH:MM:SS) : <Summary_Content>
-        2. Replicate the timestamps from the SPEAKER TIMESTAMPS section
-        3. Bold important terms with <b>...</b>.
-        4. The content is the paraphrased summary of the topic discussed by the speaker at that timestamp.
+        ## TASK AND CONSTRAINTS
         
-        CONTENT RULES:
-        1. No bullet points, lists, or line breaks within summaries.
-        2. Each topic summary must be a single paragraph.
-        3. It is possible that multiple speakers discuss the same topic; create separate entries for each speaker's contribution.
-
-        TIMESTAMP RULES:
-        1. For each topic, choose the MOST RELEVANT timestamp from SPEAKER TIMESTAMPS for the speaker actually discussing that topic.
-        2. The FIRST topic MUST use the earliest timestamp from this batch window: {earliest_timestamp}
-        3. If multiple candidate timestamps match a topic, break ties deterministically:
-            3.1 Prefer the earliest timestamp , which is closest to the topic discussion.
-            3.2 If still tied, choose the chronologically earliest timestamp.
-        4. Never create, edit, or infer a timestamp.
-
         CONTENT MINING:
         1. Identify distinct topics discussed in the batch text.
         2. For each topic, determine the primary speaker(s) involved.
         3. Find adjacent text segments from the speaker(s) that relate to the topic.
-        4. Examine how the speaker's contributions evolve over time within the batch.
-        5. Summarize each topic concisely, focusing on technical details and decisions.        
+        4. Define the interval during which the topic was discussed.
+        5. Assign the MOST RELEVANT timestamp from SPEAKER TIMESTAMPS to each topic based on when the topic was discussed.
+        6. Summarize each topic concisely, focusing on technical details and decisions.        
 
         CONTENT REQUIREMENTS:
+
+        ## 1. MINING :
+        - The current text must be paraphrased, ensure maximum coverage of all topics discussed.
         - Summarize each topic concisely, focusing on technical details and decisions.
-        - The text must include interactions between speakers when relevant . Example : ... [Speaker A] ... [X] , while [Speaker B] ... [Y] ...
-        - Use the speaker names exactly as they appear in the transcript.
-        - Use the exact timestamps provided in SPEAKER TIMESTAMPS.
         - Ignore noise such as "[music]", "[applause]", "[inaudible]" , your task is to summarize meaningful content only.
+        - Use the exact timestamps provided in SPEAKER TIMESTAMPS.
+        - The text must include interactions between speakers when relevant . Example : ... [Speaker A] ... [X] , while [Speaker B] ... [Y] ...
+        - Some topics may have more detail than others, ensure all topics are covered.
+        - Multiple speakers may discuss the same topic; list all relevant speakers.
+        
+        ## 2. FORMATTING :
         - Write in Third Person; Paraphrase; do NOT copy from the transcript.
         - Do not include first person phrasing (no "I/We/You…"). Do not replicate dialogue format.
         - Avoid proper nouns unless needed for clarity (use roles when possible).
+        - If the discussion is light or social, still include it as a topic but summarize accordingly.
+        
+        ## 3. CRITICAL INSTRUCTIONS :
+        - The text is produced from a software recording of a meeting, there might be discrepencies in technical terms, fix them when possible.
+        - Focus on technical details, decisions, action items, and key concepts , bold important terms using <b>...</b> tags.
 
-        Now, analyze the meeting batch text and produce the summary with topics, speakers, and timestamps as specified."""
+        TIMESTAMP RULES:
+        - For each topic, choose the MOST RELEVANT timestamp from SPEAKER TIMESTAMPS for the speaker actually discussing that topic.
+        - The FIRST topic MUST use the earliest timestamp from this batch window: {earliest_timestamp}
+        - If multiple candidate timestamps match a topic, break ties deterministically:
+            1. Prefer the earliest timestamp , which is closest to the topic discussion.
+            2. If still tied, choose the chronologically earliest timestamp.
+        - Never create, edit, or infer a timestamp.
+
+        ## OUTPUT :
+        ```json
+        {'''
+            "results": {
+                "<Topic 1> : {
+                    "speakers": ["<Speaker_Name>" , ...],
+                    "timestamp": "(HH:MM:SS)",
+                    "summary": "<Concise_summary_of_the_topic_discussed>"
+                },
+                ...
+                "<Topic N>": {
+                    "speakers": ["<Speaker_Name>" , ...],
+                    "timestamp": "(HH:MM:SS)",
+                    "summary": "<Concise_summary_of_the_topic_discussed>"
+                }
+            }
+        '''}
+        ```
+        
+        Remember to strictly follow the JSON format above without deviation.
+        """
 
         # Create enhanced prompt with custom instructions and context
         enhanced_prompt = create_enhanced_prompt(base_prompt, custom_prompt, context_content)

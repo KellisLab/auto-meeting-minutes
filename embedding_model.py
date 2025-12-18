@@ -209,7 +209,7 @@ def train_embedding_model(transcript_data, emb_size=128, epochs=10, cnn_kernel_s
     print(f"Training: {len(X_train)} samples, Validation: {len(X_val)} samples")
     print(f"Training for {epochs} epochs...")
     
-    for epoch in range(epochs):
+    for epoch in range(epochs):#fixed for testing
         # Training
         model.train()
         train_loss = 0.0
