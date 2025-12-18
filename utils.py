@@ -21,6 +21,38 @@ DEFAULT_BATCH_SIZE_MINUTES = 25
 from embedding_model import train_embedding_model, extract_sentence_embeddings
 
 # -------------------------------------------------------------
+# LLM Utilities
+# -------------------------------------------------------------
+
+def parse_json(summary_text):
+    import json
+    # Remove markdown code blocks if present
+    json_text = summary_text
+    if "```json" in json_text:
+        json_text = json_text.split("```json")[1].split("```")[0].strip()
+    elif "```" in json_text:
+        json_text = json_text.split("```")[1].split("```")[0].strip()
+    # Parse the JSON
+    try:
+        data = json.loads(json_text)
+        results = data.get("results", {})
+    except json.JSONDecodeError as e:
+        return f"Error parsing JSON response: {str(e)}"
+    # 3. Construct the list of lines in the format: **<Topic_Title> - <Speaker_Name>, ..., <Speaker_Name>** (H:MM:SS): <Summary_Content>
+    formatted_lines = []
+    for topic_title, topic_data in results.items():
+        speakers = topic_data.get("speakers", [])
+        timestamp = topic_data.get("timestamp", "")
+        summary = topic_data.get("summary", "")
+        # Format speaker names
+        speaker_str = ", ".join(speakers)
+        # Construct the formatted line
+        line = f"**{topic_title} - {speaker_str}** {timestamp}: {summary}"
+        formatted_lines.append(line)
+    # Join all lines with newlines
+    return "\n\n".join(formatted_lines)
+    
+# -------------------------------------------------------------
 # Information-Theoretic Utilities
 # -------------------------------------------------------------
 

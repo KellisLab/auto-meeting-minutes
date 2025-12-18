@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 # Import utility functions from utils.py
 from utils import (
+    parse_json,
     seconds_to_time_str,
     verify_timestamp_format,
     extract_transcript_data,
@@ -488,36 +489,7 @@ def summarize_batch(batch_entries, batch_number, api_key):
         # 1. Extract the text content from the response
         summary_text = response.choices[0].message.content.strip()
         # 2. Extract JSON part from the response
-        import json
-        # Remove markdown code blocks if present
-        json_text = summary_text
-        if "```json" in json_text:
-            json_text = json_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in json_text:
-            json_text = json_text.split("```")[1].split("```")[0].strip()
-        # Parse the JSON
-        try:
-            data = json.loads(json_text)
-            results = data.get("results", {})
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON from batch {batch_number}: {e}")
-            logger.error(f"Raw response: {summary_text}")
-            return f"Error parsing JSON response: {str(e)}"
-        # 3. Construct the list of lines in the format: **<Topic_Title> - <Speaker_Name>, ..., <Speaker_Name>** (H:MM:SS): <Summary_Content>
-        formatted_lines = []
-        for topic_title, topic_data in results.items():
-            speakers = topic_data.get("speakers", [])
-            timestamp = topic_data.get("timestamp", "")
-            summary = topic_data.get("summary", "")
-            # Format speaker names
-            speaker_str = ", ".join(speakers)
-            # Construct the formatted line
-            line = f"**{topic_title} - {speaker_str}** {timestamp}: {summary}"
-            formatted_lines.append(line)
-        # Join all lines with newlines
-        formatted_summary = "\n\n".join(formatted_lines)
-        logger.info(f"Generated summary for batch {batch_number} with {len(results)} topics")
-        return formatted_summary
+        return parse_json(summary_text)
 
     except Exception as e:
         return f"Error generating batch summary: {str(e)}"
