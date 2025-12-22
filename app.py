@@ -1,18 +1,18 @@
-from flask import Flask, render_template, request, jsonify, send_file, session, redirect, url_for
+from flask import Flask, render_template, request, jsonify, send_file
 import os
 import uuid
 import threading
 import time
-import importlib.util
 import sys
 import logging
-from pathlib import Path
 import shutil
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 # from authlib.integrations.flask_client import OAuth  # <--- COMMENTED OUT
-import requests  # <--- ADD THIS IMPORT
-import json  # Add this import at the top
+import requests
+import json
+import csv
+import git_summarizer
 from utils import sanitize_filename
 
 # Load environment variables
@@ -69,10 +69,9 @@ try:
     import url2file
     import vtt2txt
     import txt2xlsx
-    import refineStartTimes
     import xlsx2html
-    import fullpipeline
     import html_bold_converter
+    import git_ops
 except ImportError as e:
     logger.error(f"Error importing pipeline modules: {e}")
     sys.exit(1)
@@ -233,42 +232,193 @@ def process_url(job_id, url, options):
         if 'original_dir' in locals():
             os.chdir(original_dir)
 
+def process_git_job(job_id, repo_urls, username, start_date, end_date=None):
+    """Process Git Repos for Daily Standup or Range Report"""
+    status = processing_jobs[job_id]
+    
+    # Determine display date string
+    date_str = start_date
+    if end_date and end_date != start_date:
+        date_str = f"{start_date}_to_{end_date}"
+    
+    try:
+        # Create job directory
+        job_dir = os.path.join(app.config['UPLOAD_FOLDER'], job_id)
+        os.makedirs(job_dir, exist_ok=True)
+        
+        # Change to job directory
+        original_dir = os.getcwd()
+        os.chdir(job_dir)
+        
+        # 1. Fetch Changes via API (No Cloning)
+        target_user = username if username else "ALL USERS"
+        
+        # Handle single URL string case just in case
+        if isinstance(repo_urls, str):
+            repo_urls = [repo_urls]
+
+        all_commits = []
+        
+        for i, url in enumerate(repo_urls):
+            url = url.strip()
+            if not url: continue
+            
+            status.update("extracting", f"Fetching commits from {url} ({i+1}/{len(repo_urls)})...", 20 + int(20 * (i/len(repo_urls))))
+            commits = git_ops.fetch_repo_changes(url, username, start_date, end_date)
+            if commits:
+                all_commits.extend(commits)
+        
+        if not all_commits:
+            status.set_error(f"No commits found for {target_user} on {date_str} (or API error)")
+            os.chdir(original_dir)
+            return
+
+        status.update("parsing", f"Successfully retrieved {len(all_commits)} commits from {len(repo_urls)} repos.", 60)
+        
+        # Save raw data
+        output_file_json = f"standup_{date_str}.json"
+        with open(output_file_json, 'w') as f:
+            json.dump(all_commits, f, indent=2)
+            
+        status.add_output_file("json", output_file_json)
+
+        # 2. Generate CSV Stats
+        status.update("csv", "Generating statistics CSV...", 70)
+        csv_filename = f"git_stats_{date_str}.csv"
+        
+        try:
+            with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                # Header: Repo, file name, file path, num additions, num deletions, author-name, co-authors, date , changes, status
+                writer.writerow(['Repository', 'File Name', 'File Path', 'Additions', 'Deletions', 'Author', 'Co-Authors', 'Date', 'Changes', 'Status'])
+                
+                for commit in all_commits:
+                    repo_name = commit.get('repo', 'Unknown')
+                    author = commit.get('author', 'Unknown')
+                    date = commit.get('timestamp', '')
+                    stats = commit.get('file_stats', [])
+                    co_authors = commit.get('co-author', '').split(', ') if commit.get('co-author') else []
+                    
+                    for stat in stats:
+                        writer.writerow([
+                            repo_name,
+                            stat.get('filename', ''),
+                            stat.get('filepath', ''),
+                            stat.get('additions', 0),
+                            stat.get('deletions', 0),
+                            author,
+                            ', '.join(co_authors),
+                            date,
+                            stat.get('changes', ''),
+                            stat.get('status', '')
+                        ])
+            
+            status.add_output_file("csv", csv_filename)
+        except Exception as e:
+            logger.error(f"Failed to create CSV: {e}")
+            status.update("csv", f"Warning: Failed to create CSV: {e}", 70)
+        
+        # 3. Generate AI Summary
+        status.update("summarizing", "Generating AI Activity Report...", 80)
+        
+        # Get API Key
+        #api_key = os.getenv("API_KEY")
+        
+        # 3a. Get Structured Data (JSON)
+        # Pass the date range string for context
+        display_date = f"{start_date} to {end_date}" if end_date else start_date
+        #summary_data = git_summarizer.generate_standup_summary(all_commits, display_date, api_key)
+        
+        # Save Structured JSON
+        summary_json_file = f"standup_summary_{date_str}.json"
+        with open(summary_json_file, 'w') as f:
+            # for debugging purposes, we skip AI summary generation
+            json.dump({"results": {}}, f, indent=2)
+            #json.dump(summary_data, f, indent=2)
+        status.add_output_file("summary_json", summary_json_file)
+        
+        # 3b. Generate HTML Report
+        html_file = f"standup_{date_str}.html"
+        #git_summarizer.generate_git_html(summary_data, display_date, repo_urls, html_file)
+        git_summarizer.generate_git_html({"results": {}}, display_date, repo_urls, html_file)  # skip AI summary for now
+        status.add_output_file("html", html_file)
+        
+        # 3c. Generate Markdown Report
+        md_file = f"standup_{date_str}.md"
+        #git_summarizer.generate_git_markdown(summary_data, display_date, md_file)
+        git_summarizer.generate_git_markdown({"results": {}}, display_date, md_file)  # skip AI summary for now
+        status.add_output_file("markdown", md_file)
+        
+        status.update("completed", "Git processing completed", 100)
+        os.chdir(original_dir)
+
+    except Exception as e:
+        status.set_error(str(e))
+        logger.error(f"Error in process_git_job: {e}")
+        if 'original_dir' in locals():
+            os.chdir(original_dir)
+
 @app.route('/')
 def index():
     return render_template('index.html')
 
 @app.route('/process', methods=['POST'])
 def process():
-    # Get URL and options from form
-    url = request.form.get('url', '')
-    
-    if not url:
-        return jsonify({"error": "No URL provided"}), 400
-    
-    # Get options
-    options = {
-        "skip_refinement": request.form.get('skip_refinement') == 'true',
-        "language": request.form.get('language', 'English_USA'),
-        # These are new options with defaults matching our updated pipeline
-        "no_enhanced_summaries": request.form.get('no_enhanced_summaries') == 'true',
-        "skip_bold_conversion": request.form.get('skip_bold_conversion') == 'true'
-    }
-    
-    # Log received options
-    logger.info(f"Processing with options: {options}")
-    
+    # Check request type
+    req_type = request.form.get('type', 'video')
+
     # Generate a unique job ID
     job_id = str(uuid.uuid4())
-    
-    # Create a status object for this job
     processing_jobs[job_id] = ProcessingStatus()
-    
-    # Start processing in a background thread
-    thread = threading.Thread(target=process_url, args=(job_id, url, options))
-    thread.daemon = True
-    thread.start()
-    
-    return jsonify({"job_id": job_id})
+
+    if req_type == 'git':
+        repo_url_input = request.form.get('repo_url')
+        username = request.form.get('git_username')
+        date_str = request.form.get('git_date')
+        date_end = request.form.get('git_date_end') # Optional end date
+        
+        # Username is now optional
+        if not repo_url_input or not date_str:
+             return jsonify({"error": "Missing Git parameters (Repo URL and Start Date are required)"}), 400
+             
+        # Split URLs by comma or newline
+        repo_urls = [url.strip() for url in repo_url_input.replace(',', '\n').split('\n') if url.strip()]
+        
+        target_log = username if username else "ALL USERS"
+        display_date = f"{date_str} to {date_end}" if date_end else date_str
+        logger.info(f"Starting Git Job: {len(repo_urls)} repos for {target_log} on {display_date}")
+        
+        thread = threading.Thread(target=process_git_job, args=(job_id, repo_urls, username, date_str, date_end))
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({"job_id": job_id})
+
+    else:
+        # EXISTING VIDEO LOGIC
+        # Get URL and options from form
+        url = request.form.get('url', '')
+        
+        if not url:
+            return jsonify({"error": "No URL provided"}), 400
+        
+        # Get options
+        options = {
+            "skip_refinement": request.form.get('skip_refinement') == 'true',
+            "language": request.form.get('language', 'English_USA'),
+            "no_enhanced_summaries": request.form.get('no_enhanced_summaries') == 'true',
+            "skip_bold_conversion": request.form.get('skip_bold_conversion') == 'true'
+        }
+        
+        # Log received options
+        logger.info(f"Processing with options: {options}")
+        
+        # Start processing in a background thread
+        thread = threading.Thread(target=process_url, args=(job_id, url, options))
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({"job_id": job_id})
 
 @app.route('/status/<job_id>', methods=['GET'])
 def status(job_id):
