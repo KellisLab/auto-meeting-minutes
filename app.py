@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 # from authlib.integrations.flask_client import OAuth  # <--- COMMENTED OUT
 import requests  # <--- ADD THIS IMPORT
 import json  # Add this import at the top
+from utils import sanitize_filename
 
 # Load environment variables
 load_dotenv()
@@ -128,19 +129,14 @@ def process_url(job_id, url, options):
             status.set_error("Could not extract a valid video ID from the URL")
             os.chdir(original_dir)
             return
-        
         status.update("extracting_name", "Extracting meeting name from URL...", 10)
+        
         # 1. Extract meeting name
         meeting_name = url2meeting_name.get_meeting_name_from_viewer_page(url)# remember it might be None // we will have LLM figure it out later
-        if not meeting_name:
-            status.update("name_fallback", "Could not extract meeting name, using video ID as fallback", 15)
-            file_prefix = video_id
-        else:
-            # Sanitize meeting name for filenames
-            file_prefix = fullpipeline.sanitize_filename(meeting_name)
-        status.update("name_extracted", f"Extracted meeting name: {meeting_name}", 15)
+        file_prefix = sanitize_filename(meeting_name) if meeting_name else video_id
+        status.update("name_extracted", f"Extracted meeting name: {meeting_name}", 10)
         
-        status.update("downloading", "Downloading transcript...", 20)
+        
         # 2. Download transcript
         srt_file = f"{file_prefix}.srt"
         language = options.get("language", "English_USA")
@@ -149,21 +145,22 @@ def process_url(job_id, url, options):
             status.set_error("Failed to download transcript")
             os.chdir(original_dir)
             return
+        status.update("downloading", "Downloaded transcript...", 15)
         
-        status.update("converting", "Converting SRT to TXT...", 30)
         # 3. Convert SRT to TXT
         txt_file = f"{file_prefix}.txt"
         txt_file = vtt2txt.vtt_to_txt(srt_file, txt_file)
+        status.update("converting", "Converted SRT to TXT...", 20)
         
-        status.update("excel", "Converting TXT to Excel format...", 40)
         # 4. Convert TXT to XLSX
         xlsx_file = f"{file_prefix}.xlsx"
         xlsx_file = txt2xlsx.txt_to_xlsx(txt_file, xlsx_file)
+        status.update("excel", "Converted TXT to Excel format...", 25)
 
-        status.update("html", "Generating HTML with summaries...", 60)
         # Generate HTML with summaries
         html_file = f"{file_prefix}_speaker_summaries.html"
         summary_file = f"{file_prefix}_meeting_summaries.html"
+        status.update("html", "Generated HTML with summaries...", 30)
         speaker_summary_file = f"{file_prefix}_speaker_summaries.md"
         meeting_summary_md_file = f"{file_prefix}_meeting_summaries.md"
         
@@ -171,7 +168,6 @@ def process_url(job_id, url, options):
         use_enhanced_summaries = not options.get("no_enhanced_summaries", False)
         
         # Important: This matches how fullpipeline.py calls process_xlsx
-        status.update("html", "Creating HTML with speaker summaries...", 65)
         try:
             result_files = xlsx2html.process_xlsx(
                 xlsx_file,
@@ -181,43 +177,40 @@ def process_url(job_id, url, options):
                 meeting_summary_md_file,
                 use_enhanced_summaries=use_enhanced_summaries
             )
+            status.update("html", "Created HTML with speaker summaries...", 90)
             
             # Unpack result files if available
             if result_files:
-                # Handle new 5-file return (includes Mantis Excel)
-                if len(result_files) == 5:
-                    html_file, summary_file, speaker_summary_file, meeting_summary_md_file, mantis_file = result_files
-                    status.add_output_file("mantis_xlsx", mantis_file)
-                # Handle legacy 4-file return
-                elif len(result_files) == 4:
-                    html_file, summary_file, speaker_summary_file, meeting_summary_md_file = result_files
+                html_file, summary_file, speaker_summary_file, meeting_summary_md_file, mantis_file = result_files
+                status.add_output_file("mantis_xlsx", mantis_file)
+            #endif
                     
         except Exception as e:
             logger.error(f"Error in xlsx2html processing: {e}")
-            status.update("html", f"Warning: Error in HTML generation: {str(e)}", 70)
-            status.update("proceeding", "Proceeding with available files...", 75)
+            status.update("html", f"Warning: Error in HTML generation: {str(e)}", 90)
+            status.update("proceeding", "Proceeding with available files...", 90)
         
         # Convert markdown-style bold formatting to HTML bold tags by default
         if not options.get("skip_bold_conversion", False) and html_bold_converter:
-            status.update("formatting", "Converting markdown bold to HTML tags...", 80)
+            status.update("formatting", "Converting markdown bold to HTML tags...", 95)
             
             # Process HTML files
             if os.path.exists(html_file):
                 html_bold_converter.process_html_file(html_file)
-                status.update("formatting", "Converted bold formatting in speaker summaries HTML", 85)
+                status.update("formatting", "Converted bold formatting in speaker summaries HTML", 96)
                 
             if os.path.exists(summary_file):
                 html_bold_converter.process_html_file(summary_file)
-                status.update("formatting", "Converted bold formatting in meeting summaries HTML", 90)
+                status.update("formatting", "Converted bold formatting in meeting summaries HTML", 97)
                 
             # Process Markdown files
             if os.path.exists(speaker_summary_file):
                 html_bold_converter.process_md_file(speaker_summary_file)
-                status.update("formatting", "Converted bold formatting in speaker summaries MD", 95)
+                status.update("formatting", "Converted bold formatting in speaker summaries MD", 98)
                 
             if os.path.exists(meeting_summary_md_file):
                 html_bold_converter.process_md_file(meeting_summary_md_file)
-                status.update("formatting", "Converted bold formatting in meeting summaries MD", 98)
+                status.update("formatting", "Converted bold formatting in meeting summaries MD", 99)
         
         status.update("completed", "Processing completed successfully!", 100)
         

@@ -21,8 +21,21 @@ DEFAULT_BATCH_SIZE_MINUTES = 25
 from embedding_model import train_embedding_model, extract_sentence_embeddings
 
 # -------------------------------------------------------------
-# LLM Utilities
+# Text Utilities
 # -------------------------------------------------------------
+
+def sanitize_filename(name):
+    """Sanitize meeting name to create a valid filename"""
+    # Replace colons with dots (e.g., "4:00pm" → "4.00pm")
+    name = re.sub(r':', '.', name)
+    # Replace invalid filename characters with underscores
+    name = re.sub(r'[\\/*?"<>|]', '_', name)
+    # Replace multiple spaces with a single underscore
+    name = re.sub(r'\s+', '_', name)
+    # Limit filename length
+    if len(name) > 100:
+        name = name[:100]
+    return name
 
 def parse_json(summary_text):
     import json

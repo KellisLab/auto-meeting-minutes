@@ -43,13 +43,7 @@ def extract_id_from_url(url):
 
 def get_meeting_name_from_viewer_page(url):
     """
-    Extract meeting name from the Panopto viewer page HTML
-    
-    Args:
-        url (str): Panopto video URL
-        
-    Returns:
-        str: Meeting name or None if extraction fails
+        Extract meeting name from the Panopto viewer page
     """
     try:
         # Send GET request to the viewer page
@@ -62,8 +56,6 @@ def get_meeting_name_from_viewer_page(url):
         if response.status_code == 200:
             # Parse HTML
             soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Try to find title in various places
             
             # Method 1: Look for the title tag which typically includes the meeting name
             page_title = soup.title.string if soup.title else None
@@ -83,12 +75,6 @@ def get_meeting_name_from_viewer_page(url):
                 if " - Panopto" in title_content:
                     return title_content.split(" - Panopto")[0].strip()
                 return title_content.strip()
-            
-            # Method 4: Look for specific div elements that might contain the title
-            title_divs = soup.find_all('div', class_=re.compile(r'title|header|heading', re.I))
-            for div in title_divs:
-                if div.text and len(div.text.strip()) > 0:
-                    return div.text.strip()
             
             # If all methods fail, return a default message
             return "Untitled Panopto Meeting"
