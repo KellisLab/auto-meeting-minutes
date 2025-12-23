@@ -322,31 +322,31 @@ def process_git_job(job_id, repo_urls, username, start_date, end_date=None):
         status.update("summarizing", "Generating AI Activity Report...", 80)
         
         # Get API Key
-        #api_key = os.getenv("API_KEY")
+        api_key = os.getenv("API_KEY")
         
         # 3a. Get Structured Data (JSON)
         # Pass the date range string for context
         display_date = f"{start_date} to {end_date}" if end_date else start_date
-        #summary_data = git_summarizer.generate_standup_summary(all_commits, display_date, api_key)
+        summary_data = git_summarizer.generate_standup_summary(all_commits, display_date, api_key)
         
         # Save Structured JSON
         summary_json_file = f"standup_summary_{date_str}.json"
         with open(summary_json_file, 'w') as f:
             # for debugging purposes, we skip AI summary generation
-            json.dump({"results": {}}, f, indent=2)
-            #json.dump(summary_data, f, indent=2)
+            #json.dump({"results": {}}, f, indent=2)
+            json.dump(summary_data, f, indent=2)
         status.add_output_file("summary_json", summary_json_file)
         
         # 3b. Generate HTML Report
         html_file = f"standup_{date_str}.html"
-        #git_summarizer.generate_git_html(summary_data, display_date, repo_urls, html_file)
-        git_summarizer.generate_git_html({"results": {}}, display_date, repo_urls, html_file)  # skip AI summary for now
+        git_summarizer.generate_git_html(summary_data, display_date, repo_urls, html_file)
+        #git_summarizer.generate_git_html({"results": {}}, display_date, repo_urls, html_file)  # skip AI summary for now
         status.add_output_file("html", html_file)
         
         # 3c. Generate Markdown Report
         md_file = f"standup_{date_str}.md"
-        #git_summarizer.generate_git_markdown(summary_data, display_date, md_file)
-        git_summarizer.generate_git_markdown({"results": {}}, display_date, md_file)  # skip AI summary for now
+        git_summarizer.generate_git_markdown(summary_data, display_date, md_file)
+        #git_summarizer.generate_git_markdown({"results": {}}, display_date, md_file)  # skip AI summary for now
         status.add_output_file("markdown", md_file)
         
         status.update("completed", "Git processing completed", 100)
@@ -651,7 +651,12 @@ if __name__ == '__main__':
     # Log API model and key status
     api_key = os.getenv("API_KEY")
     model = os.getenv("GPT_MODEL", "Not set - will use default")
+    base_url = os.getenv("AI_BASE_URL")
+    
     logger.info(f"Using API model: {model}")
+    if base_url:
+        logger.info(f"Using Custom AI Base URL: {base_url}")
+    
     logger.info(f"API Key configured: {'Yes' if api_key else 'No - summaries will be limited'}")
     
     # In Docker, we want to listen on all interfaces

@@ -46,41 +46,60 @@ def fetch_repo_changes(repo_url, username, start_date, end_date=None, token=None
     params = {
         "since": since_date,
         "until": until_date,
-        "per_page": 100 
+        "per_page": 100  # Maximum allowed by GitHub API
     }
     
     if username:
         params["author"] = username
 
-    # 3. Get List of Commits
+    # 3. Get List of Commits with Pagination
     commits_url = f"https://api.github.com/repos/{owner}/{repo}/commits"
     logger.info(f"Fetching commits from {commits_url} for range {start_date} to {target_end}")
     
     try:
-        response = requests.get(commits_url, headers=headers, params=params)
+        all_commits_list = []
+        page = 1
         
-        if response.status_code == 403:
-            logger.error("GitHub API Rate Limit Exceeded. Please set GITHUB_TOKEN in .env")
-            return []
-        elif response.status_code == 404:
-            logger.error(f"Repo not found (404): {repo_url}. If this is a private repo, ensure GITHUB_TOKEN is set in .env and docker-compose.yml")
-            return []
-        elif response.status_code != 200:
-            logger.error(f"GitHub API Error: {response.status_code} - {response.text}")
-            return []
+        # Paginate through all results
+        while True:
+            params["page"] = page
+            response = requests.get(commits_url, headers=headers, params=params)
             
-        commits_list = response.json()
+            if response.status_code == 403:
+                logger.error("GitHub API Rate Limit Exceeded. Please set GITHUB_TOKEN in .env")
+                return []
+            elif response.status_code == 404:
+                logger.error(f"Repo not found (404): {repo_url}. If this is a private repo, ensure GITHUB_TOKEN is set in .env and docker-compose.yml")
+                return []
+            elif response.status_code != 200:
+                logger.error(f"GitHub API Error: {response.status_code} - {response.text}")
+                return []
+                
+            commits_page = response.json()
+            
+            # If no commits returned, we've reached the end
+            if not commits_page:
+                break
+                
+            all_commits_list.extend(commits_page)
+            logger.info(f"Fetched page {page}: {len(commits_page)} commits (total so far: {len(all_commits_list)})")
+            
+            # If we got fewer than 100 commits, this was the last page
+            if len(commits_page) < 100:
+                break
+                
+            page += 1
         
-        if not commits_list:
+        if not all_commits_list:
             logger.info(f"No commits found for {start_date} - {target_end}")
             return []
             
-        logger.info(f"Found {len(commits_list)} commits. Fetching details...")
+        logger.info(f"Found {len(all_commits_list)} total commits. Fetching details...")
         
         structured_commits = []
         
         # 4. Fetch details (diffs) for each commit
-        for item in commits_list:
+        for item in all_commits_list:
             sha = item['sha']
             commit_url = item['url'] # API url for specific commit
             
@@ -120,6 +139,10 @@ def fetch_repo_changes(repo_url, username, start_date, end_date=None, token=None
                 if patch:
                     full_diff += f"\n--- {filename} ---\n{patch}\n"
             
+            # Truncate massive diffs for LLM safety
+            if len(full_diff) > 15000:
+                full_diff = full_diff[:15000] + "\n...[Diff truncated]..."
+
             structured_commits.append({
                 "repo": f"{owner}/{repo}",
                 "hash": sha,

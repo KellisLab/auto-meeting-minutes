@@ -25,7 +25,12 @@ def generate_standup_summary(commits, date_str, api_key=None):
         return {"results": {"Error": {"summary": "No API Key provided", "authors": [], "type": "Error"}}}
     
     # Configure OpenAI client
-    client = openai.OpenAI(api_key=key)
+    base_url = os.getenv("AI_BASE_URL")
+    if base_url:
+        client = openai.OpenAI(api_key=key, base_url=base_url)
+    else:
+        client = openai.OpenAI(api_key=key)
+
     model = os.getenv("GPT_MODEL", "gpt-4o")
 
     # 1. Group commits: Repo -> Date -> Author
@@ -86,8 +91,6 @@ def process_single_batch(client, model, repo, date, author, commits):
             
         # Add the actual diff (truncated)
         diff = c.get('diff', '')
-        if len(diff) > 2000: # Slightly larger chunk for focused batch
-            diff = diff[:2000] + "\n...[Diff truncated]..."
         
         context_text += f"Changes:\n{diff}\n"
         context_text += "-" * 40 + "\n"

@@ -360,7 +360,13 @@ def summarize_batch(batch_entries, batch_number, api_key):
     end_time = seconds_to_time_str(end_seconds)
 
     try:
-        openai.api_key = api_key
+        # Configure Client with optional Base URL
+        base_url = os.getenv("AI_BASE_URL")
+        if base_url:
+            client = openai.OpenAI(api_key=api_key, base_url=base_url)
+        else:
+            client = openai.OpenAI(api_key=api_key)
+
          # Determine if this is the first batch (meeting start)
         is_first_batch = batch_number == 1
         
@@ -464,7 +470,7 @@ def summarize_batch(batch_entries, batch_number, api_key):
         """
 
         # Using chat completions API
-        response = openai.chat.completions.create(
+        response = client.chat.completions.create(
             model=MODEL,
             messages=[
                 {
