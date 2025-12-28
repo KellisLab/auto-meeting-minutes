@@ -1,45 +1,49 @@
 """
-Script to download Panopto videos listed in an Excel file using yt-dlp."""
-
+Download ONE Panopto video via yt-dlp.
+Usage examples:
+  python download.py --url "https://....id=XXXX"
+  # or let it read PANOPTO_URL from .env
+"""
 
 import os
 import re
-import pandas as pd
 import subprocess
+import argparse
+from pathlib import Path
 from dotenv import load_dotenv
+
 load_dotenv()
 
-def download_media():
-    # Load environment variables
-    excel_path = os.getenv("EXCEL_PATH")
-    download_dir = os.getenv("DOWNLOAD_DIRECTORY")
-    os.makedirs(download_dir, exist_ok=True)
+ID_RE = re.compile(r"id=([a-f0-9\-]+)", re.IGNORECASE)
 
-    # Read Excel and take the first column as URLs
-    df = pd.read_excel(excel_path)
-    urls = df.iloc[:, 0].dropna().tolist()
+def download_media(url: str, download_dir: str) -> str:
+    Path(download_dir).mkdir(parents=True, exist_ok=True)
 
-    print(f"Found {len(urls)} URLs")
+    m = ID_RE.search(url)
+    if not m:
+        raise ValueError(f"No video ID found in URL: {url}")
 
-    # Regex to extract Panopto ID
-    ID_RE = re.compile(r"id=([a-f0-9\-]+)", re.IGNORECASE)
+    video_id = m.group(1)
+    out_path = os.path.join(download_dir, f"{video_id}.mp4")
 
-    for i, url in enumerate(urls, start=1):
-        m = ID_RE.search(url)
-        if not m:
-            print(f"\n[{i}] ❌ No video ID found in URL: {url}")
-            continue
+    print(f"Downloading:\n  {url}\n  -> {out_path}")
 
-        video_id = m.group(1)
-        out_path = os.path.join(download_dir, f"{video_id}.mp4")
+    subprocess.run(
+        ["yt-dlp", "-o", out_path, url],
+        check=True
+    )
 
-        print(f"\n[{i}/{len(urls)}] Downloading:\n  {url}\n  -> {out_path}")
+    print("Done for f{video_id}")
+    return out_path
 
-        try:
-            subprocess.run(
-                ["yt-dlp", "-o", out_path, url],
-                check=True
-            )
-            print("  ✓ Done")
-        except subprocess.CalledProcessError as e:
-            print("  ❌ Failed:", e)
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument("--url", default=os.getenv("PANOPTO_URL"), help="Single Panopto URL (or set PANOPTO_URL in .env)")
+    p.add_argument("--download-dir", default=os.getenv("DOWNLOAD_DIRECTORY", "downloads"))
+    return p.parse_args()
+
+if __name__ == "__main__":
+    args = parse_args()
+    if not args.url:
+        raise RuntimeError("Provide --url or set PANOPTO_URL in your .env")
+    download_media(args.url, args.download_dir)

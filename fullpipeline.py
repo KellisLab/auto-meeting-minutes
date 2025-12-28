@@ -14,7 +14,7 @@ def parse_args():
     p.add_argument("--workdir", default="batch_runs", help="Parent directory for all runs")
     p.add_argument("--limit", type=int, help="Limit clips per video")
     p.add_argument("--dry-run", action="store_true")
-    p.add_argument("--workers", type=int, default=1, help="Parallel workers (use 1 to start)")
+ 
     p.add_argument("--skip-existing", action="store_true", help="Skip already processed URLs")
     
     p.add_argument("--workers", type=int, default=1, help="Parallel workers (use 1 to start)")
@@ -36,7 +36,7 @@ def process_single_url(url, workdir, limit=None, dry_run=False):
         clips_dir = run_stage("Cut clips", cut_clips, media, csv, workdir / "clips", limit, dry_run)
         embeddings_dir = run_stage("Extract embeddings", extract_embeddings, clips_dir, workdir / "embeddings")
         
-        logging.info(f"✅ Successfully processed: {url}")
+        logging.info(f"Successfully processed: {url}")
         return (url, True, None)
     
     except Exception as e:
@@ -91,7 +91,7 @@ def main():
             workdir = parent_workdir / url_dirname
             
             if args.skip_existing and workdir.exists():
-                logging.info(f"⏭️  Skipping existing: {url}")
+                logging.info(f"  Skipping existing: {url}")
                 results.append((url, True, "Skipped - already exists"))
                 continue
             

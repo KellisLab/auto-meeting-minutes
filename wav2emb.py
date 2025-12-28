@@ -237,8 +237,6 @@ def extract_embeddings(
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Extract wav2vec2 embeddings from .wav clips.")
-    ap.add_argument("--clips-dir", default=os.getenv("CLIPS_DIR", ""), help="Directory with .wav clips")
-    ap.add_argument("--out-dir", default=os.getenv("OUT_DIR", ""), help="Output directory for embeddings + index")
     ap.add_argument("--model-id", default="facebook/wav2vec2-base")
     ap.add_argument("--layer", type=int, default=-1)
     ap.add_argument("--target-sr", type=int, default=16000)
