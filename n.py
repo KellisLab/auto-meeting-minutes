@@ -34,15 +34,11 @@ import importlib.util
 # Import utility functions from utils.py
 from utils import (
     seconds_to_time_str,
-    time_str_to_seconds,
-    format_corrected_timestamp,
     verify_timestamp_format,
-    get_column_letter,
     extract_transcript_data,
     extract_unique_speakers,
     create_time_batches,
     extract_text_for_batch,
-    find_best_timestamp_match,
     update_speaker_timestamps_for_topics,
     extract_topics_from_summary,
     get_api_key,
@@ -188,20 +184,22 @@ def create_enhanced_prompt(base_prompt, custom_prompt=None, context_content=None
     if context_content:
         context_section = f"""
 
-PROJECT CONTEXT:
-{context_content}
+        PROJECT CONTEXT:
+        {context_content}
 
-This meeting should be interpreted within the context of the above project. Reference relevant project details when summarizing topics and speaker contributions."""
+        This meeting should be interpreted within the context of the above project. Reference relevant project details when summarizing topics and speaker contributions.
+        """
         enhanced_prompt += context_section
     
     # Add custom instructions if provided
     if custom_prompt:
         custom_section = f"""
 
-CUSTOM INSTRUCTIONS FOR THIS MEETING:
-{custom_prompt}
+        CUSTOM INSTRUCTIONS FOR THIS MEETING:
+        {custom_prompt}
 
-Please incorporate these specific requirements into your summarization approach."""
+        Please incorporate these specific requirements into your summarization approach.
+        """
         enhanced_prompt += custom_section
     
     return enhanced_prompt
@@ -279,66 +277,90 @@ def summarize_batch_enhanced(batch_entries, batch_number, api_key, custom_prompt
     try:
         openai.api_key = api_key
 
-        base_prompt = f"""You are producing a structured summary of a meeting transcript batch.
+        base_prompt = f"""
+        You are a meeting summarization assistant . 
+        You are given a batch of transcript text from a meeting along with detailed speaker timestamps.
+        Your task is to act as a technical summarizer who identifies key topics discussed in the meeting batch,
+        assigns each topic to the appropriate speaker(s), and provides concise summaries for each topic.
+        You must follow the instructions below to ensure accurate timestamp usage and content summarization.
+        Your style should be formal, technical, and objective , using third-person phrasing.
+        
+        ## INPUT :
+        - MEETING TRANSCRIPT BATCH TEXT: The transcript text for the current batch of the meeting.
+        - SPEAKER TIMESTAMPS: A detailed list of timestamps for each speaker in the batch, including context snippets.
 
-NON-NEGOTIABLE GUARDRAILS:
-- You MUST begin with the first topical content **even if it is lightweight** (greetings, agenda, setup).
-- The **FIRST output line MUST use the earliest timestamp in this batch window**: {earliest_timestamp}
-- If the earliest content is simple, title it: "Introductions & Setup".
-- Never invent or modify timestamps. Use only those in SPEAKER TIMESTAMPS.
-- Obey the exact output format and paragraph-only content rule.
+        ## TASK AND CONSTRAINTS
+        
+        CONTENT MINING:
+        1. Identify distinct topics discussed in the batch text.
+        2. For each topic, determine the primary speaker(s) involved.
+        3. Find adjacent text segments from the speaker(s) that relate to the topic.
+        4. Define the interval during which the topic was discussed.
+        5. Assign the MOST RELEVANT timestamp from SPEAKER TIMESTAMPS to each topic based on when the topic was discussed.
+        6. Summarize each topic concisely, focusing on technical details and decisions.        
 
-OUTPUT FORMAT (CRITICAL; EXACTLY THIS):
-Each topic must be a single line in this exact pattern:
-**Topic Title - Speaker Name** (H:MM:SS): Content...
+        CONTENT REQUIREMENTS:
 
-Formatting rules:
-- MUST include speaker names in the format: **Topic Title - Speaker Name** (H:MM:SS): Content...
-- Use only exact timestamps from the SPEAKER TIMESTAMPS section
+        ## 1. MINING :
+        - The current text must be paraphrased, ensure maximum coverage of all topics discussed.
+        - Summarize each topic concisely, focusing on technical details and decisions.
+        - Ignore noise such as "[music]", "[applause]", "[inaudible]" , your task is to summarize meaningful content only.
+        - Use the exact timestamps provided in SPEAKER TIMESTAMPS.
+        - The text must include interactions between speakers when relevant . Example : ... [Speaker A] ... [X] , while [Speaker B] ... [Y] ...
+        - Some topics may have more detail than others, ensure all topics are covered.
+        - Multiple speakers may discuss the same topic; list all relevant speakers.
+        
+        ## 2. FORMATTING :
+        - Write in Third Person; Paraphrase; do NOT copy from the transcript.
+        - Do not include first person phrasing (no "I/We/You…"). Do not replicate dialogue format.
+        - Avoid proper nouns unless needed for clarity (use roles when possible).
+        - If the discussion is light or social, still include it as a topic but summarize accordingly.
+        
+        ## 3. CRITICAL INSTRUCTIONS :
+        - The text is produced from a software recording of a meeting, there might be discrepencies in technical terms, fix them when possible.
+        - Focus on technical details, decisions, action items, and key concepts , bold important terms using <b>...</b> tags.
 
-- Bold important terms with <b>...</b>.
-- Content must be a single paragraph (no bullets, no line breaks).
-- Do NOT add a concluding summary.
+        TIMESTAMP RULES:
+        - For each topic, choose the MOST RELEVANT timestamp from SPEAKER TIMESTAMPS for the speaker actually discussing that topic.
+        - The FIRST topic MUST use the earliest timestamp from this batch window: {earliest_timestamp}
+        - If multiple candidate timestamps match a topic, break ties deterministically:
+            1. Prefer the earliest timestamp , which is closest to the topic discussion.
+            2. If still tied, choose the chronologically earliest timestamp.
+        - Never create, edit, or infer a timestamp.
 
-TIMESTAMP SELECTION RULES:
-1) For each topic, choose the MOST RELEVANT timestamp from SPEAKER TIMESTAMPS for the speaker actually discussing that topic.
-2) The FIRST topic MUST use the earliest timestamp from this batch window: {earliest_timestamp}
-3) If multiple candidate timestamps match a topic, break ties deterministically:
-   a) Prefer the earliest timestamp ≥ the point where the topic begins in this batch.
-   b) If still tied, choose the chronologically earliest timestamp.
-4) Never create, edit, or infer a timestamp.
-
-CONTENT REQUIREMENTS:
-- Be technically precise and comprehensive.
-- Include interactions between speakers when relevant (e.g., short mentions like "X responds to Y").
-- Use the speaker names exactly as they appear in the transcript.
-- Use the exact timestamps provided in SPEAKER TIMESTAMPS.
-- Write in Third Person.
-- Ignore boilerplate or system messages such as "[Auto-generated transcript...]", "[music]", "[applause]", "[inaudible]", etc. Do not produce topics for these.
-- Paraphrase; do NOT copy from the transcript.
-- Do not quote or include dialogue. Do not include first-person phrasing (no "I/We/You…").
-- Avoid proper nouns unless needed for clarity (use roles when possible).
-- Do not hallucinate.
-
-INTERNAL SELF-CHECK (DO NOT PRINT): Verify privately that
-- first line uses {earliest_timestamp}
-- every line matches the required pattern
-- all timestamps appear in SPEAKER TIMESTAMPS
-- no bullets or extra line breaks
-- everything is third person
-If any answer is NO, fix the output and re-check before returning.
-AFTER YOU SELF-CHECK, RETURN ONLY THE TOPIC LINES—NO EXPLANATIONS, NO CHECKLIST, NO EXTRA TEXT."""
+        ## OUTPUT :
+        ```json
+        {'''
+            "results": {
+                "<Topic 1> : {
+                    "speakers": ["<Speaker_Name>" , ...],
+                    "timestamp": "(HH:MM:SS)",
+                    "summary": "<Concise_summary_of_the_topic_discussed>"
+                },
+                ...
+                "<Topic N>": {
+                    "speakers": ["<Speaker_Name>" , ...],
+                    "timestamp": "(HH:MM:SS)",
+                    "summary": "<Concise_summary_of_the_topic_discussed>"
+                }
+            }
+        '''}
+        ```
+        
+        Remember to strictly follow the JSON format above without deviation.
+        """
 
         # Create enhanced prompt with custom instructions and context
         enhanced_prompt = create_enhanced_prompt(base_prompt, custom_prompt, context_content)
 
         full_prompt = f"""{enhanced_prompt}
 
-{timestamp_reference}
+        {timestamp_reference}
 
-MEETING TRANSCRIPT BATCH #{batch_number} ({start_time} - {end_time}):
+        MEETING TRANSCRIPT BATCH #{batch_number} ({start_time} - {end_time}):
 
-{batch_text}"""
+        {batch_text}
+        """
 
         # Using chat completions API
         response = openai.chat.completions.create(

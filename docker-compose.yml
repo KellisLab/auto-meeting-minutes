@@ -13,6 +13,8 @@ services:
       # OpenAI API configuration
       - API_KEY=${API_KEY:-your_openai_api_key_here}  # Uses .env file or default
       - GPT_MODEL=${GPT_MODEL:-gpt-4o}  # AI model to use for summarization
+      # GitHub Token for API access (Required for private repos)
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
       # Optional: Configure output directory
       - MEETING_ROOT_DIR=/app/temp_files
     healthcheck:
