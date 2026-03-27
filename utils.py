@@ -17,7 +17,7 @@ load_dotenv(override=True)
 
 # Constants
 OPENAI_API_KEY = os.getenv("API_KEY")
-DEFAULT_MODEL = os.getenv("GPT_MODEL", "gpt-4o")
+DEFAULT_MODEL = os.getenv("GPT_MODEL", "chatgpt-4o-latest")
 DEFAULT_BATCH_SIZE_MINUTES = 40
 
 # -------------------------------------------------------------

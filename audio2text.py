@@ -8,7 +8,7 @@ client = OpenAI()
 audio_file= open("path", "rb") #To be changed to the path of the audio file
 
 transcription = client.audio.transcriptions.create(
-    model="gpt-4o-transcribe", 
+    model="gpt-4o-mini-transcribe", 
     file=audio_file
 )
 
