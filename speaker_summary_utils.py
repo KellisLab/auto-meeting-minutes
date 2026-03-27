@@ -200,7 +200,7 @@ def summarize_speaker_topic(speaker, topic_text, topic_number, api_key=None):
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"},
-            max_tokens=800,
+            max_completion_tokens=800,
         )
         
         # Parse JSON response

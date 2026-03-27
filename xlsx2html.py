@@ -490,7 +490,7 @@ def summarize_batch(batch_entries, batch_number, api_key):
                 },
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=10000,  # More tokens for batch summaries
+            max_completion_tokens=10000,  # More tokens for batch summaries
         )
 
         summary = response.choices[0].message.content.strip()

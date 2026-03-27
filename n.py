@@ -350,7 +350,7 @@ MEETING TRANSCRIPT BATCH #{batch_number} ({start_time} - {end_time}):
                 },
                 {"role": "user", "content": full_prompt},
             ],
-            max_tokens=10000,  # More tokens for batch summaries
+            max_completion_tokens=10000,  # More tokens for batch summaries
         )
 
         summary = response.choices[0].message.content.strip()
