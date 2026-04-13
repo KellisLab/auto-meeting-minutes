@@ -16,7 +16,10 @@ import re
 import os
 import argparse
 import requests
-from bs4 import BeautifulSoup
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    BeautifulSoup = None
 from urllib.parse import urlparse, parse_qs
 
 def extract_id_from_url(url):
@@ -41,6 +44,25 @@ def extract_id_from_url(url):
     else:
         return None
 
+def extract_title_from_html(html):
+    """Extract meeting title from raw HTML using simple string parsing."""
+    og_title = re.search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']', html, re.I)
+    if og_title:
+        title = og_title.group(1).strip()
+        if " - Panopto" in title:
+            return title.split(" - Panopto")[0].strip()
+        return title
+
+    title_tag = re.search(r'<title>(.*?)</title>', html, re.I | re.S)
+    if title_tag:
+        title = title_tag.group(1).strip()
+        if " - Panopto" in title:
+            return title.split(" - Panopto")[0].strip()
+        return title
+
+    return None
+
+
 def get_meeting_name_from_viewer_page(url):
     """
     Extract meeting name from the Panopto viewer page HTML
@@ -60,36 +82,44 @@ def get_meeting_name_from_viewer_page(url):
         
         # Check if request was successful
         if response.status_code == 200:
-            # Parse HTML
-            soup = BeautifulSoup(response.text, 'html.parser')
+            html = response.text
             
-            # Try to find title in various places
-            
-            # Method 1: Look for the title tag which typically includes the meeting name
-            page_title = soup.title.string if soup.title else None
-            if page_title and " - Panopto" in page_title:
-                return page_title.split(" - Panopto")[0].strip()
-            
-            # Method 2: Try to find a header or heading element with the meeting name
-            heading_elements = soup.find_all(['h1', 'h2', 'h3'], class_=re.compile(r'title|heading|header', re.I))
-            for elem in heading_elements:
-                if elem.text and len(elem.text.strip()) > 0:
-                    return elem.text.strip()
-            
-            # Method 3: Look for metadata elements that might contain the title
-            meta_title = soup.find('meta', property='og:title')
-            if meta_title and meta_title.get('content'):
-                title_content = meta_title.get('content')
-                if " - Panopto" in title_content:
-                    return title_content.split(" - Panopto")[0].strip()
-                return title_content.strip()
-            
-            # Method 4: Look for specific div elements that might contain the title
-            title_divs = soup.find_all('div', class_=re.compile(r'title|header|heading', re.I))
-            for div in title_divs:
-                if div.text and len(div.text.strip()) > 0:
-                    return div.text.strip()
-            
+            # If BeautifulSoup is available, use it for more robust parsing
+            if BeautifulSoup is not None:
+                soup = BeautifulSoup(html, 'html.parser')
+
+                # Method 1: Look for the title tag which typically includes the meeting name
+                page_title = soup.title.string if soup.title else None
+                if page_title and " - Panopto" in page_title:
+                    return page_title.split(" - Panopto")[0].strip()
+                if page_title and page_title.strip():
+                    return page_title.strip()
+
+                # Method 2: Try to find a header or heading element with the meeting name
+                heading_elements = soup.find_all(['h1', 'h2', 'h3'], class_=re.compile(r'title|heading|header', re.I))
+                for elem in heading_elements:
+                    if elem.text and len(elem.text.strip()) > 0:
+                        return elem.text.strip()
+
+                # Method 3: Look for metadata elements that might contain the title
+                meta_title = soup.find('meta', property='og:title')
+                if meta_title and meta_title.get('content'):
+                    title_content = meta_title.get('content')
+                    if " - Panopto" in title_content:
+                        return title_content.split(" - Panopto")[0].strip()
+                    return title_content.strip()
+
+                # Method 4: Look for specific div elements that might contain the title
+                title_divs = soup.find_all('div', class_=re.compile(r'title|header|heading', re.I))
+                for div in title_divs:
+                    if div.text and len(div.text.strip()) > 0:
+                        return div.text.strip()
+
+            # Fall back to raw HTML parsing if BeautifulSoup is unavailable or if the above failed
+            title = extract_title_from_html(html)
+            if title:
+                return title
+
             # If all methods fail, return a default message
             return "Untitled Panopto Meeting"
         else:

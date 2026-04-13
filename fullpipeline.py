@@ -641,6 +641,7 @@ def run_pipeline_from_url(url, skip_refinement=False, language="English_USA",
     # Step 1.5: Extract meeting name from URL
     print("Step 1.5: Extracting meeting name from URL...")
     url2meeting_name_path = os.path.join(script_dir, "url2meeting_name.py")
+    meeting_name = None
     
     try:
         url2meeting_name = import_module_from_file("url2meeting_name", url2meeting_name_path)
