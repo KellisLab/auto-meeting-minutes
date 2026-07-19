@@ -36,7 +36,7 @@ ENV FLASK_APP=app.py
 ENV FLASK_ENV=production
 ENV PYTHONUNBUFFERED=1
 # Configure the model to use for summarization - override in docker-compose.yml if needed
-ENV GPT_MODEL="gpt-5.4"
+ENV GPT_MODEL="glm-5.2-fp8"
 
 # Run the application
 CMD ["python", "app.py"]

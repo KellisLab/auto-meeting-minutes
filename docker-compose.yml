@@ -12,7 +12,11 @@ services:
       - FLASK_ENV=production
       # OpenAI API configuration
       - API_KEY=${API_KEY:-your_openai_api_key_here}  # Uses .env file or default
-      - GPT_MODEL=${GPT_MODEL:-chatgpt-4o-latest}  # AI model to use for summarization
+      - GPT_MODEL=${GPT_MODEL:-glm-5.2-fp8}  # AI model to use for summarization
+      # Optional: point at a self-hosted OpenAI-compatible endpoint (vLLM/sglang/TGI).
+      # Leave empty/unset to use the real OpenAI API. Must end with /v1.
+      # Example: https://kellis-h200-1.csail.mit.edu/agent/v1
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       # Optional: Configure output directory
       - MEETING_ROOT_DIR=/app/temp_files
     healthcheck:

@@ -265,6 +265,14 @@ DATABASE_URL=postgresql://username:password@host:port/database
 # Panopto Configuration
 PANOPTO_FOLDER_ID=your-panopto-folder-id
 
+# AI Summarization Configuration
+API_KEY=your_openai_api_key_here
+GPT_MODEL=glm-5.2-fp8
+# Optional: point at a self-hosted OpenAI-compatible endpoint (vLLM/sglang/TGI).
+# Leave empty/unset to use the real OpenAI API. Must end with /v1.
+# Example: https://kellis-h200-1.csail.mit.edu/agent/v1
+OPENAI_BASE_URL=
+
 # Celery Configuration (optional)
 CELERY_BROKER_URL=redis://localhost:6379/0
 ```

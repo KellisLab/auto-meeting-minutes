@@ -277,7 +277,8 @@ def summarize_batch_enhanced(batch_entries, batch_number, api_key, custom_prompt
     earliest_timestamp = seconds_to_time_str(earliest_seconds)
 
     try:
-        openai.api_key = api_key
+        from utils import get_openai_client, get_chat_completion_kwargs
+        client = get_openai_client(api_key)
 
         base_prompt = f"""You are producing a structured summary of a meeting transcript batch.
 
@@ -341,7 +342,7 @@ MEETING TRANSCRIPT BATCH #{batch_number} ({start_time} - {end_time}):
 {batch_text}"""
 
         # Using chat completions API
-        response = openai.chat.completions.create(
+        response = client.chat.completions.create(
             model=MODEL,
             messages=[
                 {
@@ -351,6 +352,7 @@ MEETING TRANSCRIPT BATCH #{batch_number} ({start_time} - {end_time}):
                 {"role": "user", "content": full_prompt},
             ],
             max_completion_tokens=10000,  # More tokens for batch summaries
+            **get_chat_completion_kwargs(),
         )
 
         summary = response.choices[0].message.content.strip()
