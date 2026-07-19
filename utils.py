@@ -17,12 +17,13 @@ load_dotenv(override=True)
 
 # Constants
 OPENAI_API_KEY = os.getenv("API_KEY")
-DEFAULT_MODEL = os.getenv("GPT_MODEL", "gpt-5.4")
+DEFAULT_MODEL = os.getenv("GPT_MODEL", "glm-5.2-fp8")
 DEFAULT_BATCH_SIZE_MINUTES = 40
 
-# Optional OpenAI-compatible endpoint (e.g. self-hosted vLLM/sglang).
-# When set, all chat completions go to this base URL instead of OpenAI's API.
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")  # e.g. https://kellis-h200-1.csail.mit.edu/agent/v1
+# OpenAI-compatible endpoint (self-hosted vLLM/sglang).
+# Defaults to the lab's local model server. Set OPENAI_BASE_URL="" to use the
+# real OpenAI API instead.
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://kellis-h200-1.csail.mit.edu/agent/v1")
 
 # A module-level cache so we don't reconstruct the client on every call.
 _openai_client = None
