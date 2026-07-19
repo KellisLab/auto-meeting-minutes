@@ -12,7 +12,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 
 # Default model from environment or fallback
-MODEL = os.getenv("GPT_MODEL", "glm-5.2-fp8")
+MODEL = os.getenv("GPT_MODEL") or "glm-5.2-fp8"
 
 def compute_text_similarity(text1, text2):
     """
