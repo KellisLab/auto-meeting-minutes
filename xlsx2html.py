@@ -419,7 +419,8 @@ def summarize_batch(batch_entries, batch_number, api_key):
             timestamp_reference += f"  {i}. {ts['time_str']} - '{ts['text']}...'\n"
 
     try:
-        openai.api_key = api_key
+        from utils import get_openai_client, get_chat_completion_kwargs
+        client = get_openai_client(api_key)
          # Determine if this is the first batch (meeting start)
         is_first_batch = batch_number == 1
         
@@ -481,7 +482,7 @@ def summarize_batch(batch_entries, batch_number, api_key):
         )
 
         # Using chat completions API
-        response = openai.chat.completions.create(
+        response = client.chat.completions.create(
             model=MODEL,
             messages=[
                 {
@@ -491,6 +492,7 @@ def summarize_batch(batch_entries, batch_number, api_key):
                 {"role": "user", "content": prompt},
             ],
             max_completion_tokens=10000,  # More tokens for batch summaries
+            **get_chat_completion_kwargs(),
         )
 
         summary = response.choices[0].message.content.strip()

@@ -20,6 +20,77 @@ OPENAI_API_KEY = os.getenv("API_KEY")
 DEFAULT_MODEL = os.getenv("GPT_MODEL", "gpt-5.4")
 DEFAULT_BATCH_SIZE_MINUTES = 40
 
+# Optional OpenAI-compatible endpoint (e.g. self-hosted vLLM/sglang).
+# When set, all chat completions go to this base URL instead of OpenAI's API.
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")  # e.g. https://kellis-h200-1.csail.mit.edu/agent/v1
+
+# A module-level cache so we don't reconstruct the client on every call.
+_openai_client = None
+
+
+def get_openai_client(api_key=None):
+    """
+    Build (and cache) an OpenAI client configured for either the real OpenAI
+    API or an OpenAI-compatible endpoint (vLLM, sglang, TGI, ...) when
+    OPENAI_BASE_URL is set.
+
+    The returned client is what callers should use for chat.completions.create.
+
+    Args:
+        api_key (str, optional): OpenAI API key. If omitted, resolved via
+            get_api_key(). For local OpenAI-compatible endpoints a non-empty
+            placeholder is sufficient.
+
+    Returns:
+        openai.OpenAI
+    """
+    global _openai_client
+    import openai
+
+    if _openai_client is not None:
+        return _openai_client
+
+    # When pointing at a local OpenAI-compatible endpoint, a real API key is
+    # usually not required. Don't call get_api_key() (which would prompt
+    # interactively) — just use a placeholder so the SDK is satisfied.
+    if OPENAI_BASE_URL:
+        api_key = api_key or "local-endpoint-no-key-required"
+    elif api_key is None:
+        api_key = get_api_key()
+
+    # The SDK insists on a non-empty string even for no-auth local endpoints.
+    if not api_key:
+        api_key = "local-endpoint-no-key-required"
+
+    client_kwargs = {"api_key": api_key}
+    if OPENAI_BASE_URL:
+        client_kwargs["base_url"] = OPENAI_BASE_URL
+
+    _openai_client = openai.OpenAI(**client_kwargs)
+    return _openai_client
+
+
+def get_chat_completion_kwargs(**overrides):
+    """
+    Build a dict of extra kwargs for chat.completions.create() that work with
+    reasoning models served by sglang/vLLM (e.g. glm-5.2-fp8).
+
+    - Disables the separate reasoning phase so the answer lands in `content`
+      (the SDK reads message.content, not message.reasoning_content).
+    - Keeps max_completion_tokens (the API accepts both max_tokens and
+      max_completion_tokens on sglang; the repo already uses the latter).
+
+    Merge these with caller-supplied kwargs by spreading the return value:
+        client.chat.completions.create(..., **get_chat_completion_kwargs())
+    """
+    base = {
+        # For reasoning models on sglang, disabling thinking puts the answer
+        # in `content` and skips the (expensive, slow) reasoning phase.
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+    }
+    base.update(overrides)
+    return base
+
 # -------------------------------------------------------------
 # Time and Timestamp Utilities
 # -------------------------------------------------------------
@@ -514,8 +585,13 @@ def get_api_key():
             except Exception:
                 pass
     
-    # If still no API key, prompt user
+    # If still no API key, prompt user — UNLESS we're pointed at a local
+    # OpenAI-compatible endpoint (OPENAI_BASE_URL set), in which case a real
+    # key isn't required and we return a placeholder so the SDK is satisfied
+    # and non-interactive runs (Docker, cron, pipeline) don't hang on input().
     if not api_key:
+        if OPENAI_BASE_URL:
+            return "local-endpoint-no-key-required"
         print("OpenAI API key not found. Please enter your API key:")
         api_key = input("> ").strip()
         

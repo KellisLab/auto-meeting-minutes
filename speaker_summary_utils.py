@@ -179,8 +179,9 @@ def summarize_speaker_topic(speaker, topic_text, topic_number, api_key=None):
         }
     
     try:
-        openai.api_key = api_key
-        
+        from utils import get_openai_client, get_chat_completion_kwargs
+        client = get_openai_client(api_key)
+
         prompt = (
             f"Generate a concise summary of this speaker's contribution to a specific topic.\n\n"
             f"Instructions:\n"
@@ -191,9 +192,9 @@ def summarize_speaker_topic(speaker, topic_text, topic_number, api_key=None):
             f"5. Keep content to a single paragraph with no line breaks\n\n"
             f"TRANSCRIPT FROM {speaker} (TOPIC #{topic_number}):\n\n{topic_text}"
         )
-        
+
         # Using chat completions API
-        response = openai.chat.completions.create(
+        response = client.chat.completions.create(
             model=MODEL,
             messages=[
                 {"role": "system", "content": "You are a technical meeting summarizer. MUST USE <b>bold</b> for important technical terms and concepts."},
@@ -201,6 +202,7 @@ def summarize_speaker_topic(speaker, topic_text, topic_number, api_key=None):
             ],
             response_format={"type": "json_object"},
             max_completion_tokens=800,
+            **get_chat_completion_kwargs(),
         )
         
         # Parse JSON response
