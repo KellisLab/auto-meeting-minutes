@@ -168,7 +168,7 @@ def summarize_speaker_topic(speaker, topic_text, topic_number, api_key=None):
         dict: Dictionary with title and content of summary
     """
     if not api_key:
-        from utils import get_api_key
+        from .utils import get_api_key
         api_key = get_api_key()
     
     if not api_key:
@@ -272,7 +272,7 @@ def generate_enhanced_speaker_summary_html(transcript_data, video_id, html_file=
     # Get summaries data if not provided
     if summaries_data is None:
         if not api_key:
-            from utils import get_api_key
+            from .utils import get_api_key
             api_key = get_api_key()
         summaries_data = generate_speaker_summaries_data(transcript_data, api_key)
     
@@ -391,7 +391,7 @@ def generate_speaker_summaries_data(transcript_data, api_key=None):
         dict: Enhanced speaker data with summaries
     """
     if not api_key:
-        from utils import get_api_key
+        from .utils import get_api_key
         api_key = get_api_key()
     
     # Get enhanced speaker topics

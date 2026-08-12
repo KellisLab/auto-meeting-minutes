@@ -32,7 +32,7 @@ import numpy as np
 import importlib.util
 
 # Import utility functions from utils.py
-from utils import (
+from .utils import (
     seconds_to_time_str,
     time_str_to_seconds,
     format_corrected_timestamp,
@@ -48,7 +48,7 @@ from utils import (
     get_api_key,
 )
 
-from speaker_summary_utils import (
+from .speaker_summary_utils import (
     enhance_speaker_tracking,
     summarize_speaker_topic,
     generate_enhanced_speaker_summary_markdown,
