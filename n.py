@@ -19,6 +19,7 @@ python xlsx2html.py meeting.xlsx 757a2c7c-eb52-47d1-9b4a-b2a1014b530b meeting_li
 python xlsx2html.py meeting.xlsx 757a2c7c-eb52-47d1-9b4a-b2a1014b530b --context-file mantis_project_context.txt
 """
 
+import logging
 import sys
 import os
 import pandas as pd
@@ -384,7 +385,8 @@ MEETING TRANSCRIPT BATCH #{batch_number} ({start_time} - {end_time}):
         return summary
 
     except Exception as e:
-        return f"Error generating batch summary: {str(e)}"
+        logging.getLogger(__name__).error("Error generating batch summary", exc_info=e)
+        return "Error generating batch summary: Internal server error"
 
 
 # -------------------------------------------------------------

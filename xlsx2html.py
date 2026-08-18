@@ -17,6 +17,7 @@ python xlsx2html.py meeting.xlsx 757a2c7c-eb52-47d1-9b4a-b2a1014b530b
 python xlsx2html.py meeting.xlsx 757a2c7c-eb52-47d1-9b4a-b2a1014b530b meeting_links.html
 """
 
+import logging
 import sys
 import os
 import pandas as pd
@@ -505,7 +506,8 @@ def summarize_batch(batch_entries, batch_number, api_key):
         return summary
 
     except Exception as e:
-        return f"Error generating batch summary: {str(e)}"
+        logging.getLogger(__name__).error("Error generating batch summary", exc_info=e)
+        return "Error generating batch summary: Internal server error"
 
 
 # -------------------------------------------------------------
