@@ -64,7 +64,8 @@ from speaker_summary_utils import (
 load_dotenv()
 # Access the API key
 OPENAI_API_KEY = os.getenv("API_KEY")
-MODEL = os.getenv("GPT_MODEL") or "glm-5.2-fp8"
+from llm_output import DEFAULT_MODEL as _DEFAULT_LLM_MODEL
+MODEL = os.getenv("GPT_MODEL") or _DEFAULT_LLM_MODEL
 # Default batch size for meeting summaries (in minutes)
 DEFAULT_BATCH_SIZE_MINUTES = 40
 ENHANCED_SUMMARIES_AVAILABLE = True

@@ -19,7 +19,8 @@ load_dotenv(override=True)
 
 # Constants
 OPENAI_API_KEY = os.getenv("API_KEY")
-DEFAULT_MODEL = os.getenv("GPT_MODEL") or "glm-5.2-fp8"
+from llm_output import DEFAULT_MODEL as _DEFAULT_LLM_MODEL
+DEFAULT_MODEL = os.getenv("GPT_MODEL") or _DEFAULT_LLM_MODEL
 DEFAULT_BATCH_SIZE_MINUTES = 40
 
 # OpenAI-compatible endpoint (self-hosted vLLM/sglang).

@@ -267,18 +267,20 @@ PANOPTO_FOLDER_ID=your-panopto-folder-id
 
 # AI Summarization Configuration
 API_KEY=your_openai_api_key_here
-GPT_MODEL=glm-5.2-fp8
+# Model id on the endpoint. Default: continuum-1 (GLM 5.3 FP8 on the lab server).
+GPT_MODEL=continuum-1
 # Optional: point at a self-hosted OpenAI-compatible endpoint (vLLM/sglang/TGI).
 # Leave empty/unset to use the real OpenAI API. Must end with /v1.
 # Example: https://kellis-h200-1.csail.mit.edu/agent/v1
 OPENAI_BASE_URL=
 # Reasoning effort sent to a self-hosted reasoning model: low | high | max.
-# low (default) answers directly and is the fastest; max thinks before answering
-# (about 8x slower per batch). The model's scratchpad is never published at any
-# setting. Set to an empty value to send no effort at all.
-LLM_REASONING_EFFORT=low
-# max_completion_tokens per call. Defaults follow the effort: 10000 / 800 at
-# low, 32000 / 8000 otherwise, because thinking spends completion tokens
+# high (default) reasons briefly before answering at close to the cost of low;
+# low answers directly; max reasons at length (about 8x slower per batch). The
+# model's scratchpad is never published at any setting. Set to an empty value
+# to send no effort at all.
+LLM_REASONING_EFFORT=high
+# max_completion_tokens per call. Defaults follow the effort: 32000 / 8000 at
+# high and max, 10000 / 800 at low, because reasoning spends completion tokens
 # before the answer starts.
 LLM_MAX_TOKENS_BATCH=
 LLM_MAX_TOKENS_TOPIC=

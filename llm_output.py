@@ -8,7 +8,7 @@ must hold for a summary to be safe to publish:
    ``chat_template_kwargs={"enable_thinking": False}`` does exactly that on
    GLM 5.3: the vendored chat template ignores the flag (the model still
    deliberates) while sglang stops splitting the deliberation out, so the whole
-   chain of thought comes back as ``message.content``. We select the fast path
+   chain of thought comes back as ``message.content``. We select the effort
    with ``reasoning_effort`` instead, which the template does honour.
 2. Whatever comes back is validated before it is written into minutes, so a
    server-side change degrades to a retry and a visible error rather than to
@@ -21,8 +21,13 @@ import json
 import os
 import re
 
-# "low" | "high" | "max" on the lab's GLM server; empty string sends nothing.
-DEFAULT_REASONING_EFFORT = "low"
+# GLM 5.3 FP8 on the lab's sglang server, which serves it under this id.
+DEFAULT_MODEL = "continuum-1"
+
+# "low" | "high" | "max" on that server; empty string sends nothing. "high"
+# reasons briefly before answering at close to the cost of "low"; "max" reasons
+# at length (about 8x slower per batch).
+DEFAULT_REASONING_EFFORT = "high"
 
 _OPENAI_HOSTS = ("api.openai.com",)
 
@@ -44,7 +49,7 @@ def get_chat_completion_kwargs(base_url=None, **overrides):
     Extra kwargs for chat.completions.create() against the configured endpoint.
 
     For a self-hosted OpenAI-compatible endpoint (sglang/vLLM) this selects the
-    reasoning effort through the chat template. It never sends
+    reasoning effort (default high) through the chat template. It never sends
     ``enable_thinking``: see the module docstring. The real OpenAI API rejects
     unknown body fields, so nothing extra is sent there.
 
@@ -76,8 +81,8 @@ def completion_token_limit(kind):
     max_completion_tokens for a "batch" summary or a speaker "topic" summary.
 
     LLM_MAX_TOKENS_BATCH / LLM_MAX_TOKENS_TOPIC override it. Otherwise the limit
-    follows the effort: the historical limits at "low" (no scratchpad), and a
-    budget with room for the scratchpad at any other effort.
+    follows the effort: a budget with room for the scratchpad at the default
+    "high" and at "max", and the historical limits at "low" (no scratchpad).
     """
     spec = _TOKEN_LIMITS[kind]
     override = (os.getenv(spec["env"]) or "").strip()

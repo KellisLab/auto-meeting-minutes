@@ -8,6 +8,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import llm_output  # noqa: E402
 from llm_output import (  # noqa: E402
     LLMOutputError,
     completion_token_limit,
@@ -59,7 +60,7 @@ class RequestSettings(unittest.TestCase):
             kwargs = get_chat_completion_kwargs(base_url=LOCAL)
         template_kwargs = kwargs["extra_body"]["chat_template_kwargs"]
         self.assertNotIn("enable_thinking", template_kwargs)
-        self.assertEqual(template_kwargs, {"reasoning_effort": "low"})
+        self.assertEqual(template_kwargs, {"reasoning_effort": "high"})
 
     def test_effort_is_configurable_and_can_be_disabled(self):
         with mock.patch.dict(os.environ, {"LLM_REASONING_EFFORT": "max"}, clear=True):
@@ -80,13 +81,16 @@ class RequestSettings(unittest.TestCase):
 
 class TokenLimits(unittest.TestCase):
     def test_low_effort_keeps_the_historical_limits(self):
-        with mock.patch.dict(os.environ, {}, clear=True):
+        with mock.patch.dict(os.environ, {"LLM_REASONING_EFFORT": "low"}, clear=True):
             self.assertEqual((completion_token_limit("batch"), completion_token_limit("topic")), (10000, 800))
 
-    def test_thinking_efforts_get_room_for_the_scratchpad(self):
-        for effort in ("high", "max", ""):
-            with mock.patch.dict(os.environ, {"LLM_REASONING_EFFORT": effort}, clear=True):
+    def test_default_and_thinking_efforts_get_room_for_the_scratchpad(self):
+        for env in ({}, {"LLM_REASONING_EFFORT": "high"}, {"LLM_REASONING_EFFORT": "max"}, {"LLM_REASONING_EFFORT": ""}):
+            with mock.patch.dict(os.environ, env, clear=True):
                 self.assertEqual((completion_token_limit("batch"), completion_token_limit("topic")), (32000, 8000))
+
+    def test_defaults_are_glm_53_at_high_effort(self):
+        self.assertEqual((llm_output.DEFAULT_MODEL, llm_output.DEFAULT_REASONING_EFFORT), ("continuum-1", "high"))
 
     def test_explicit_override_wins(self):
         env = {"LLM_REASONING_EFFORT": "max", "LLM_MAX_TOKENS_BATCH": "48000"}
