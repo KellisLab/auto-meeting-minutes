@@ -267,14 +267,44 @@ PANOPTO_FOLDER_ID=your-panopto-folder-id
 
 # AI Summarization Configuration
 API_KEY=your_openai_api_key_here
-GPT_MODEL=glm-5.2-fp8
+# Model id on the endpoint. Default: continuum-1 (GLM 5.3 FP8 on the lab server).
+GPT_MODEL=continuum-1
 # Optional: point at a self-hosted OpenAI-compatible endpoint (vLLM/sglang/TGI).
 # Leave empty/unset to use the real OpenAI API. Must end with /v1.
 # Example: https://kellis-h200-1.csail.mit.edu/agent/v1
 OPENAI_BASE_URL=
+# Reasoning effort sent to a self-hosted reasoning model: low | high | max.
+# high (default) reasons briefly before answering at close to the cost of low;
+# low answers directly; max reasons at length (about 8x slower per batch). The
+# model's scratchpad is never published at any setting. Set to an empty value
+# to send no effort at all.
+LLM_REASONING_EFFORT=high
+# max_completion_tokens per call. Defaults follow the effort: 32000 / 8000 at
+# high and max, 10000 / 800 at low, because reasoning spends completion tokens
+# before the answer starts.
+LLM_MAX_TOKENS_BATCH=
+LLM_MAX_TOKENS_TOPIC=
 
 # Celery Configuration (optional)
 CELERY_BROKER_URL=redis://localhost:6379/0
+```
+
+## Summary Validation
+
+Every model reply is validated before it is written into minutes
+(`llm_output.py`): a batch summary must be a run of
+`**Topic - Speaker** (H:MM:SS):` lines and a speaker summary must be a JSON
+object with `title` and `content`; model deliberation or prompt echo is
+rejected, the call is retried, and after three rejections the batch reports an
+error instead of publishing the text. `enable_thinking` is never sent: on
+GLM 5.3 behind sglang it moves the model's whole scratchpad into the reply.
+
+To find already-generated summaries that need a re-run:
+
+```bash
+python check_summaries.py /path/to/output            # report with evidence
+python check_summaries.py --since 2026-08-28 --paths-only /path/to/output
+python -m unittest discover tests                     # no network or API key needed
 ```
 
 ## Troubleshooting
