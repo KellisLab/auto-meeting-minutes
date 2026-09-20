@@ -171,43 +171,6 @@ def list_available_contexts():
 # -------------------------------------------------------------
 # Enhanced Summarization Functions with Custom Prompts
 # -------------------------------------------------------------
-def create_enhanced_prompt(base_prompt, custom_prompt=None, context_content=None):
-    """
-    Create an enhanced prompt by combining base prompt with custom instructions and context.
-    
-    Args:
-        base_prompt (str): The base system prompt
-        custom_prompt (str, optional): Custom instructions for this specific meeting
-        context_content (str, optional): Project or conversation context
-        
-    Returns:
-        str: Enhanced prompt combining all elements
-    """
-    enhanced_prompt = base_prompt
-    
-    # Add project context if provided
-    if context_content:
-        context_section = f"""
-
-PROJECT CONTEXT:
-{context_content}
-
-This meeting should be interpreted within the context of the above project. Reference relevant project details when summarizing topics and speaker contributions."""
-        enhanced_prompt += context_section
-    
-    # Add custom instructions if provided
-    if custom_prompt:
-        custom_section = f"""
-
-CUSTOM INSTRUCTIONS FOR THIS MEETING:
-{custom_prompt}
-
-Please incorporate these specific requirements into your summarization approach."""
-        enhanced_prompt += custom_section
-    
-    return enhanced_prompt
-
-
 def summarize_batch_enhanced(batch_entries, batch_number, api_key, custom_prompt=None, context_content=None):
     """
     Enhanced version of summarize_batch with support for custom prompts and project context.
@@ -273,112 +236,29 @@ def summarize_batch_enhanced(batch_entries, batch_number, api_key, custom_prompt
         for i, ts in enumerate(sorted_timestamps, 1):
             timestamp_reference += f"  {i}. {ts['time_str']} - '{ts['text']}...'\n"
 
-    # Get the earliest timestamp for the first topic requirement
-    earliest_seconds = min(entry["seconds"] for entry in batch_entries)
-    earliest_timestamp = seconds_to_time_str(earliest_seconds)
-
     try:
         from utils import get_openai_client, get_chat_completion_kwargs
         from llm_output import completion_token_limit, create_validated_completion, extract_batch_summary
+        from prompts import build_batch_messages
         client = get_openai_client(api_key)
 
-        base_prompt = f"""You are producing a structured summary of a meeting transcript batch.
+        messages, instructions = build_batch_messages(
+            batch_number, start_time, end_time, timestamp_reference, batch_text,
+            custom_prompt=custom_prompt, context_content=context_content,
+        )
 
-NON-NEGOTIABLE GUARDRAILS:
-- You MUST begin with the first topical content **even if it is lightweight** (greetings, agenda, setup).
-- The **FIRST output line MUST use the earliest timestamp in this batch window**: {earliest_timestamp}
-- If the earliest content is simple, title it: "Introductions & Setup".
-- Never invent or modify timestamps. Use only those in SPEAKER TIMESTAMPS.
-- Obey the exact output format and paragraph-only content rule.
-
-OUTPUT FORMAT (CRITICAL; EXACTLY THIS):
-Each topic must be a single line in this exact pattern:
-**Topic Title - Speaker Name** (H:MM:SS): Content...
-
-Formatting rules:
-- MUST include speaker names in the format: **Topic Title - Speaker Name** (H:MM:SS): Content...
-- Use only exact timestamps from the SPEAKER TIMESTAMPS section
-
-- Bold important terms with <b>...</b>.
-- Content must be a single paragraph (no bullets, no line breaks).
-- Do NOT add a concluding summary.
-
-TIMESTAMP SELECTION RULES:
-1) For each topic, choose the MOST RELEVANT timestamp from SPEAKER TIMESTAMPS for the speaker actually discussing that topic.
-2) The FIRST topic MUST use the earliest timestamp from this batch window: {earliest_timestamp}
-3) If multiple candidate timestamps match a topic, break ties deterministically:
-   a) Prefer the earliest timestamp ≥ the point where the topic begins in this batch.
-   b) If still tied, choose the chronologically earliest timestamp.
-4) Never create, edit, or infer a timestamp.
-
-CONTENT REQUIREMENTS:
-- Be technically precise and comprehensive.
-- Include interactions between speakers when relevant (e.g., short mentions like "X responds to Y").
-- Use the speaker names exactly as they appear in the transcript.
-- Use the exact timestamps provided in SPEAKER TIMESTAMPS.
-- Write in Third Person.
-- Ignore boilerplate or system messages such as "[Auto-generated transcript...]", "[music]", "[applause]", "[inaudible]", etc. Do not produce topics for these.
-- Paraphrase; do NOT copy from the transcript.
-- Do not quote or include dialogue. Do not include first-person phrasing (no "I/We/You…").
-- Avoid proper nouns unless needed for clarity (use roles when possible).
-- Do not hallucinate.
-
-Begin the reply with the first topic line and return only the topic lines: no preamble, notes, checklist or explanation."""
-
-        # Create enhanced prompt with custom instructions and context
-        enhanced_prompt = create_enhanced_prompt(base_prompt, custom_prompt, context_content)
-
-        full_prompt = f"""{enhanced_prompt}
-
-{timestamp_reference}
-
-MEETING TRANSCRIPT BATCH #{batch_number} ({start_time} - {end_time}):
-
-{batch_text}"""
-
-        # Using chat completions API
-        # Only a reply that is a clean run of topic lines is accepted; leaked
-        # deliberation is retried and then surfaces as an error, never as minutes.
+        # Only a reply that is a clean, grounded run of topic lines is accepted:
+        # leaked deliberation, prompt echo, unknown speakers and truncation are
+        # retried and then surface as an error, never as minutes. Timestamps that
+        # are not in the transcript are snapped to the nearest real one.
         summary = create_validated_completion(
             client,
-            extract_batch_summary,
+            lambda reply: extract_batch_summary(reply, entries=batch_entries, instructions=instructions),
             model=MODEL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a technical meeting summarizer. NEVER modify the timestamps provided to you. Follow all custom instructions and project context provided.",
-                },
-                {"role": "user", "content": full_prompt},
-            ],
+            messages=messages,
             max_completion_tokens=completion_token_limit("batch"),
             **get_chat_completion_kwargs(),
         )
-
-        # Post-process to verify timestamps are from the provided list
-        for speaker, timestamps in speaker_timestamps.items():
-            # Create a set of valid timestamps for this speaker
-            valid_timestamps = {ts["time_str"] for ts in timestamps}
-
-            # Look for patterns like "**Topic - Speaker** (H:MM:SS):" with timestamps
-            pattern = f"\\*\\*[^*]+ - {re.escape(speaker)}\\*\\* \\(([0-9]:[0-9]{{2}}:[0-9]{{2}})\\)"
-            matches = re.finditer(pattern, summary)
-
-            for match in matches:
-                found_timestamp = match.group(1)
-
-                # Check if the timestamp is valid for this speaker
-                if found_timestamp not in valid_timestamps:
-                    # Use the first timestamp as fallback
-                    fallback_timestamp = timestamps[0]["time_str"]
-
-                    # Replace the incorrect timestamp with a valid one
-                    summary = summary.replace(
-                        f"**{match.group(0).split('**')[1]}** ({found_timestamp})",
-                        f"**{match.group(0).split('**')[1]}** ({fallback_timestamp})",
-                    )
-                    print(
-                        f"Warning: Replaced invalid timestamp {found_timestamp} with {fallback_timestamp} for {speaker}"
-                    )
 
         return summary
 

@@ -363,7 +363,14 @@ def extract_text_for_batch(batch_entries):
 # Topic Extraction and Matching
 # -------------------------------------------------------------
 
-def find_best_timestamp_match(topic_content, speaker_name, transcript_data):
+# A topic's timestamp may be refined only this close to the one the summarizer
+# chose. Text similarity over a whole meeting finds recurring subjects an hour
+# away; the summarizer's timestamp is already grounded in the right batch.
+REMATCH_WINDOW_SECONDS = 600
+
+
+def find_best_timestamp_match(topic_content, speaker_name, transcript_data,
+                              near_seconds=None, window_seconds=REMATCH_WINDOW_SECONDS):
     """
     Find the best timestamp match for a topic in the transcript
     
@@ -371,12 +378,19 @@ def find_best_timestamp_match(topic_content, speaker_name, transcript_data):
         topic_content (str): Content text of the topic
         speaker_name (str): Name of the speaker
         transcript_data (list): List of transcript entries
+        near_seconds (int, optional): The topic's current timestamp. When given,
+            only the speaker's entries within window_seconds of it are candidates,
+            and None is returned when there are none (keep the current timestamp).
+        window_seconds (int): Half-width of that window
         
     Returns:
         dict: The best matching transcript entry
     """
     # First, filter by speaker
     speaker_entries = [entry for entry in transcript_data if entry['name'] == speaker_name]
+    if near_seconds is not None:
+        speaker_entries = [entry for entry in speaker_entries
+                           if abs(entry['seconds'] - near_seconds) <= window_seconds]
     
     if not speaker_entries:
         return None
@@ -482,7 +496,8 @@ def extract_topics_from_summary(summary, video_id=None, transcript_data=None):
                 topic_content = summary[start_pos:next_start].strip()
                 
                 # Find the best matching entry for this topic/speaker
-                best_match = find_best_timestamp_match(topic_content, speaker, transcript_data)
+                best_match = find_best_timestamp_match(
+                    topic_content, speaker, transcript_data, near_seconds=timestamp_seconds)
                 if best_match:
                     # Use the matched timestamp instead
                     timestamp_seconds = best_match.get('matched_seconds', best_match.get('seconds', timestamp_seconds))
@@ -528,7 +543,8 @@ def update_speaker_timestamps_for_topics(topics, transcript_data):
         content = topic['content']
         
         # Find the best matching entry for this topic/speaker
-        best_match = find_best_timestamp_match(content, speaker, transcript_data)
+        best_match = find_best_timestamp_match(
+            content, speaker, transcript_data, near_seconds=topic.get('timestamp_seconds'))
         
         if best_match:
             # Update the timestamp to the matched entry

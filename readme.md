@@ -279,11 +279,16 @@ OPENAI_BASE_URL=
 # model's scratchpad is never published at any setting. Set to an empty value
 # to send no effort at all.
 LLM_REASONING_EFFORT=high
-# max_completion_tokens per call. Defaults follow the effort: 32000 / 8000 at
-# high and max, 10000 / 800 at low, because reasoning spends completion tokens
-# before the answer starts.
+# max_completion_tokens per call: a ceiling against runaway generation, far above
+# any real reply (largest observed ~13k tokens), so it never shapes an answer.
+# Defaults 64000 (batch) / 32000 (speaker topic). A reply that still hits the
+# ceiling is retried with a larger budget and never published truncated.
+# Set to "none" to remove the limit (only the model's context window applies).
 LLM_MAX_TOKENS_BATCH=
 LLM_MAX_TOKENS_TOPIC=
+# How many times a transient server failure (restart, overload, dropped
+# connection) is waited out with exponential backoff (2s..120s, ~6 min at 8).
+LLM_TRANSIENT_RETRIES=8
 
 # Celery Configuration (optional)
 CELERY_BROKER_URL=redis://localhost:6379/0
@@ -292,17 +297,33 @@ CELERY_BROKER_URL=redis://localhost:6379/0
 ## Summary Validation
 
 Every model reply is validated before it is written into minutes
-(`llm_output.py`): a batch summary must be a run of
-`**Topic - Speaker** (H:MM:SS):` lines and a speaker summary must be a JSON
-object with `title` and `content`; model deliberation or prompt echo is
-rejected, the call is retried, and after three rejections the batch reports an
-error instead of publishing the text. `enable_thinking` is never sent: on
-GLM 5.3 behind sglang it moves the model's whole scratchpad into the reply.
+(`llm_output.py`), and only `message.content` is ever read:
+
+- **Structure**: a batch summary is parsed into `**Topic - Speaker** (H:MM:SS):`
+  topics and only well-formed topics survive; a short lead-in or sign-off is
+  dropped, anything longer around the topics is rejected. A speaker summary
+  must be a JSON object with `title` and `content`.
+- **Prompt echo**: any run of eight words from the instructions repeated in the
+  reply rejects it, whatever the wording of the rules.
+- **Deliberation**: first-person planning and prompt scaffold outside quoted
+  speech; a draft list followed by a final list in one reply.
+- **Grounding**: header speakers must have spoken in the batch; a timestamp that
+  is not in the transcript is snapped to the named speaker's nearest real one;
+  topics are returned in chronological order. Later timestamp refinement stays
+  within ten minutes of that grounded timestamp.
+- **Truncation**: a reply cut off at the token ceiling is never validated or
+  published; the call is repeated with a larger budget.
+
+A rejected reply is retried; after three rejections the batch reports an error
+instead of publishing the text. Transient server errors are waited out and do
+not count as attempts. `enable_thinking` is never sent: on GLM 5.3 behind
+sglang it moves the model's whole scratchpad into the reply. Both entry points
+(`xlsx2html.py`, `n.py`) share one prompt (`prompts.py`).
 
 To find already-generated summaries that need a re-run:
 
 ```bash
-python check_summaries.py /path/to/output            # report with evidence
+python check_summaries.py /path/to/output            # leaked or failed summaries, with evidence
 python check_summaries.py --since 2026-08-28 --paths-only /path/to/output
 python -m unittest discover tests                     # no network or API key needed
 ```
