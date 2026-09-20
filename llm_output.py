@@ -273,8 +273,8 @@ def ground_topics(topics, entries):
     Tie topics to the transcript they summarize.
 
     `entries` are the batch's transcript entries (name, seconds).
-    - A header whose speakers match nobody in the batch names someone who did
-      not speak: LLMOutputError.
+    - A header none of whose speakers unambiguously names someone in the batch
+      names someone who did not speak: LLMOutputError.
     - A timestamp that is not in the transcript is snapped to the nearest real
       one, preferring the named speakers' own entries.
     - Topics are returned in chronological order without exact repeats.
@@ -288,10 +288,17 @@ def ground_topics(topics, entries):
     grounded = []
     for topic in topics:
         named = [n for n in _SPEAKER_SPLIT_RE.split(topic["speakers"]) if n.strip()]
-        matched = [
-            known for n in named for known, tokens in speaker_tokens.items()
-            if _name_tokens(n) & tokens
-        ]
+        # A name is grounded by the exact spelling or by a shortened form
+        # ("Alice") that fits exactly one speaker. A conflated name ("Alice
+        # Sample" for Alice Example and Bob Sample) fits nobody.
+        matched = []
+        for n in named:
+            tokens = _name_tokens(n)
+            fits = [known for known, kt in speaker_tokens.items() if tokens and tokens <= kt]
+            if n in by_speaker:
+                matched.append(n)
+            elif len(fits) == 1:
+                matched.append(fits[0])
         if named and not matched:
             raise LLMOutputError(
                 f"topic '{topic['title']}' names a speaker not in this batch: {topic['speakers']}"
