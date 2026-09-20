@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-check_summaries.py - List generated summaries that contain leaked model reasoning.
+check_summaries.py - List generated summaries that leaked model reasoning or failed to generate.
 
 Walks one or more output trees (*_meeting_summaries.md/.html,
 *_speaker_summaries.md/.html) and prints every file whose text carries
-deliberation or prompt-echo, i.e. the meetings to re-run. Exit code 1 when any
+deliberation, prompt scaffold or the pipeline's own error text, i.e. the
+meetings to re-run. Exit code 1 when any
 file is flagged, so it can gate a publish step.
 
     python check_summaries.py /opt/data/amm-output
@@ -23,18 +24,18 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _NAME_RE = re.compile(r"_(?:meeting|speaker)_summaries\.(?:md|html)$")
 _DATE_RE = re.compile(r"(\d{4})[.\-_](\d{2})[.\-_](\d{2})")
 
-# Pieces of the prompt or of the structured-reply scaffold that only appear in
-# a summary when the model's scratchpad was published.
-_ECHO_RE = re.compile(
-    r"PRIMARY_SPEAKER:|\[Brief descriptive title|\[Detailed summary in|"
-    r"SPEAKER TIMESTAMPS|NON-NEGOTIABLE GUARDRAILS|Key points from the transcript",
+# Text that marks a summary which never got generated: the pipeline's own
+# error and fallback strings. These meetings need a re-run as much as leaks do.
+_FAILED_RE = re.compile(
+    r"Error generating batch summary|API key not provided\. Summaries not generated|"
+    r"No text available for summarization|Speaker discussed: |Key points from the transcript"
 )
 
 
 def findings(text):
-    """Distinct leak evidence in one summary file."""
+    """Distinct evidence in one summary file that it leaked reasoning or failed to generate."""
     plain = _TAG_RE.sub(" ", text)
-    return deliberation_markers(plain) + sorted({m.group(0) for m in _ECHO_RE.finditer(plain)})
+    return deliberation_markers(plain) + sorted({m.group(0).strip() for m in _FAILED_RE.finditer(plain)})
 
 
 def file_date(path):
@@ -74,7 +75,7 @@ def main():
             flagged += 1
             print(path if args.paths_only else f"{path}\n    {', '.join(found[:6])}")
     if not args.paths_only:
-        print(f"\n{flagged} of {checked} summary files contain leaked reasoning", file=sys.stderr)
+        print(f"\n{flagged} of {checked} summary files need a re-run", file=sys.stderr)
     return 1 if flagged else 0
 
 
