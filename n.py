@@ -278,6 +278,7 @@ def summarize_batch_enhanced(batch_entries, batch_number, api_key, custom_prompt
 
     try:
         from utils import get_openai_client, get_chat_completion_kwargs
+        from llm_output import completion_token_limit, create_validated_completion, extract_batch_summary
         client = get_openai_client(api_key)
 
         base_prompt = f"""You are producing a structured summary of a meeting transcript batch.
@@ -321,14 +322,7 @@ CONTENT REQUIREMENTS:
 - Avoid proper nouns unless needed for clarity (use roles when possible).
 - Do not hallucinate.
 
-INTERNAL SELF-CHECK (DO NOT PRINT): Verify privately that
-- first line uses {earliest_timestamp}
-- every line matches the required pattern
-- all timestamps appear in SPEAKER TIMESTAMPS
-- no bullets or extra line breaks
-- everything is third person
-If any answer is NO, fix the output and re-check before returning.
-AFTER YOU SELF-CHECK, RETURN ONLY THE TOPIC LINES—NO EXPLANATIONS, NO CHECKLIST, NO EXTRA TEXT."""
+Begin the reply with the first topic line and return only the topic lines: no preamble, notes, checklist or explanation."""
 
         # Create enhanced prompt with custom instructions and context
         enhanced_prompt = create_enhanced_prompt(base_prompt, custom_prompt, context_content)
@@ -342,7 +336,11 @@ MEETING TRANSCRIPT BATCH #{batch_number} ({start_time} - {end_time}):
 {batch_text}"""
 
         # Using chat completions API
-        response = client.chat.completions.create(
+        # Only a reply that is a clean run of topic lines is accepted; leaked
+        # deliberation is retried and then surfaces as an error, never as minutes.
+        summary = create_validated_completion(
+            client,
+            extract_batch_summary,
             model=MODEL,
             messages=[
                 {
@@ -351,11 +349,9 @@ MEETING TRANSCRIPT BATCH #{batch_number} ({start_time} - {end_time}):
                 },
                 {"role": "user", "content": full_prompt},
             ],
-            max_completion_tokens=10000,  # More tokens for batch summaries
+            max_completion_tokens=completion_token_limit("batch"),
             **get_chat_completion_kwargs(),
         )
-
-        summary = response.choices[0].message.content.strip()
 
         # Post-process to verify timestamps are from the provided list
         for speaker, timestamps in speaker_timestamps.items():

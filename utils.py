@@ -12,6 +12,8 @@ import importlib.util
 import json
 from dotenv import load_dotenv
 
+from llm_output import get_chat_completion_kwargs as _get_chat_completion_kwargs
+
 # Load environment variables from .env file
 load_dotenv(override=True)
 
@@ -74,24 +76,15 @@ def get_openai_client(api_key=None):
 
 def get_chat_completion_kwargs(**overrides):
     """
-    Build a dict of extra kwargs for chat.completions.create() that work with
-    reasoning models served by sglang/vLLM (e.g. glm-5.2-fp8).
+    Extra kwargs for chat.completions.create() against OPENAI_BASE_URL.
 
-    - Disables the separate reasoning phase so the answer lands in `content`
-      (the SDK reads message.content, not message.reasoning_content).
-    - Keeps max_completion_tokens (the API accepts both max_tokens and
-      max_completion_tokens on sglang; the repo already uses the latter).
+    See llm_output.get_chat_completion_kwargs: reasoning effort is selected
+    through the chat template, and enable_thinking is never sent.
 
     Merge these with caller-supplied kwargs by spreading the return value:
         client.chat.completions.create(..., **get_chat_completion_kwargs())
     """
-    base = {
-        # For reasoning models on sglang, disabling thinking puts the answer
-        # in `content` and skips the (expensive, slow) reasoning phase.
-        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
-    }
-    base.update(overrides)
-    return base
+    return _get_chat_completion_kwargs(base_url=OPENAI_BASE_URL, **overrides)
 
 # -------------------------------------------------------------
 # Time and Timestamp Utilities
