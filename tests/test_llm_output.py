@@ -259,6 +259,14 @@ class Grounding(unittest.TestCase):
         with self.assertRaisesRegex(LLMOutputError, "not in this batch"):
             extract_batch_summary(raw, entries=ENTRIES)
 
+    def test_conflated_and_ambiguous_names_are_not_grounded(self):
+        conflated = TOPIC_A.replace("- Alice Example**", "- Alice Sample**")
+        with self.assertRaisesRegex(LLMOutputError, "not in this batch"):
+            extract_batch_summary(conflated, entries=ENTRIES)
+        twins = ENTRIES + [{"name": "Alice Sample", "seconds": 400, "time_str": "0:06:40"}]
+        with self.assertRaisesRegex(LLMOutputError, "not in this batch"):
+            extract_batch_summary(TOPIC_A.replace("- Alice Example**", "- Alice**"), entries=twins)
+
     def test_partial_names_and_two_speaker_headers_match(self):
         raw = TOPIC_A.replace("- Alice Example**", "- Alice, Bob Sample**")
         self.assertIn("- Alice, Bob Sample**", extract_batch_summary(raw, entries=ENTRIES))
